@@ -251,6 +251,7 @@ function freshState(){
     ausenciasPendientes:[], misAusencias:[],
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
+    horarioDraft:null,
     error:null, saving:false,
   };
 }
@@ -273,8 +274,10 @@ async function loadState(){
       if(empIds.length){ const { data: t } = await sb.from("turnos").select("*").in("empleado_id", empIds); turnosRows = t||[]; }
       let logRows = [];
       if(empIds.length){
-        const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
-        const { data: l } = await sb.from("estados_log").select("*").in("empleado_id", empIds).gte("created_at", startOfDay.toISOString()).order("created_at");
+        const now = new Date();
+        const dow = (now.getDay()+6)%7;
+        const monday = new Date(now); monday.setDate(now.getDate()-dow); monday.setHours(0,0,0,0);
+        const { data: l } = await sb.from("estados_log").select("*").in("empleado_id", empIds).gte("created_at", monday.toISOString()).order("created_at",{ascending:true});
         logRows = l||[];
       }
       let pendRows = [];
@@ -430,6 +433,13 @@ async function setCell(empId, dayIdx, value){
   let entry = null;
   if(value==="franco") entry = {tipo:"franco", localId:null};
   else if(value){ const [tipo, localId] = value.split("|"); entry = {tipo, localId}; }
+  if(state.horarioDraft){
+    const days = (state.horarioDraft[empId]||Array(7).fill(null)).slice();
+    days[dayIdx]=entry;
+    state.horarioDraft[empId]=days;
+    render();
+    return;
+  }
   const days = (state.turnos[empId]||Array(7).fill(null)).slice();
   days[dayIdx]=entry;
   state.turnos[empId]=days;
@@ -497,6 +507,90 @@ function statusMeta(empId){
   if(st==="local") return { text:"En el local", color:"var(--lime)" };
   if(st==="descanso") return { text:"En su descanso", color:"var(--amber)" };
   return { text:"Afuera", color:"var(--text-dark-sec)", dim:true };
+}
+
+/* ---- Reportes: horas reales fichadas vs planificadas ---- */
+function computeWorkedMs(empId){
+  const log = (state.statusHistory[empId]||[]).slice().sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+  let workedMs=0, restMs=0, curStart=null, curType=null;
+  log.forEach(entry=>{
+    const t = new Date(entry.created_at).getTime();
+    if(curStart!=null){
+      const delta = t-curStart;
+      if(curType==="local") workedMs+=delta;
+      if(curType==="descanso") restMs+=delta;
+    }
+    curStart=t; curType=entry.estado;
+  });
+  if(curStart!=null){
+    const delta = Date.now()-curStart;
+    if(curType==="local") workedMs+=delta;
+    if(curType==="descanso") restMs+=delta;
+  }
+  return { workedH: Math.round((workedMs/3600000)*10)/10, restH: Math.round((restMs/3600000)*10)/10 };
+}
+
+/* ---- Generación automática de horario (heurística simple) ---- */
+function generarAutomatico(){
+  if(!state.employees.length || !state.locales.length){ state.error="Necesitás al menos un empleado y una sucursal."; render(); return; }
+  const emps = state.employees;
+  const draft = {};
+  emps.forEach(e=> draft[e.id]=Array(7).fill(null));
+  // 1) A cada empleado le reservamos un día de franco, rotando para no dejar siempre el mismo día pelado de gente.
+  emps.forEach((e,i)=>{ draft[e.id][i % 7] = {tipo:"franco", localId:null}; });
+  // 2) Armamos la lista de huecos a cubrir: cada sucursal, cada día, mañana y tarde.
+  let slots = [];
+  state.locales.forEach(loc=>{
+    for(let d=0; d<7; d++){ slots.push({localId:loc.id, day:d, tipo:"manana"}); slots.push({localId:loc.id, day:d, tipo:"tarde"}); }
+  });
+  slots.sort((a,b)=>a.day-b.day);
+  const horas = {}; emps.forEach(e=>horas[e.id]=0);
+  let ptr = 0;
+  slots.forEach(slot=>{
+    const loc = state.locales.find(l=>l.id===slot.localId);
+    const r = rulesForConfig(loc.config);
+    let tries=0;
+    while(tries < emps.length){
+      const cand = emps[ptr % emps.length]; ptr++; tries++;
+      if(draft[cand.id][slot.day]) continue;
+      if(r.maxHoras>0 && horas[cand.id]+8 > r.maxHoras) continue;
+      draft[cand.id][slot.day] = {tipo:slot.tipo, localId:slot.localId};
+      horas[cand.id]+=8;
+      return;
+    }
+    // nadie disponible para este hueco — queda vacío, el encargado lo completa a mano
+  });
+  state.horarioDraft = draft;
+  state.error=null;
+  render();
+}
+function descartarDraft(){ state.horarioDraft=null; render(); }
+async function confirmarDraft(){
+  const draft = state.horarioDraft;
+  if(!draft) return;
+  state.saving=true; render();
+  try{
+    for(const emp of state.employees){
+      for(let d=0; d<7; d++){
+        const entry = draft[emp.id] ? draft[emp.id][d] : null;
+        const prev = state.turnos[emp.id] ? state.turnos[emp.id][d] : null;
+        if(JSON.stringify(entry)===JSON.stringify(prev)) continue;
+        if(entry){
+          const { error } = await sb.from("turnos").upsert({ empleado_id:emp.id, dia:d, tipo:entry.tipo, local_id:entry.localId||null }, { onConflict:"empleado_id,dia" });
+          if(error) throw new Error("No se pudo guardar el turno de "+emp.name+": "+error.message);
+        } else {
+          const { error } = await sb.from("turnos").delete().eq("empleado_id", emp.id).eq("dia", d);
+          if(error) throw new Error("No se pudo vaciar un turno de "+emp.name+": "+error.message);
+        }
+      }
+    }
+    state.turnos = draft;
+    state.horarioDraft = null;
+  } catch(err){
+    state.error = err.message || "No se pudo confirmar el horario.";
+  } finally {
+    state.saving=false; render();
+  }
 }
 
 /* ---- Ausencias / certificados ---- */
@@ -622,37 +716,6 @@ function renderLocalCards(){
     </div>`;
   }).join("");
 }
-function renderNewLocalForm(){
-  if(!state.addingLocal) return "";
-  const d = state.newLocalDraft;
-  return `<div class="new-local-form">
-    <div class="field-label">Nombre de la sucursal</div>
-    <input id="inp-local-nombre" type="text" value="${d.nombre}" oninput="updateNewLocalDraft({nombre:this.value})" placeholder="Ej: Sucursal Centro" style="margin-bottom:14px;" />
-    ${Object.entries(RUBROS).map(([k,r])=>optRubro(k,r,d.rubro,"selectNewLocalRubro")).join("")}
-    <div class="opt ${d.rubro==='personalizado'?'selected':''}"><summary onclick="event.preventDefault(); updateNewLocalDraft({rubro:'personalizado'});"><span class="radio ${d.rubro==='personalizado'?'on':''}"></span><span class="opt-title">Personalizado</span></summary>
-      ${d.rubro==='personalizado' ? `<div style="padding:0 18px 18px 64px; display:flex; gap:10px; flex-wrap:wrap;">
-        <div style="flex:1;min-width:140px;"><div class="field-label">Descanso (hs)</div><input id="inp-local-descanso-custom" type="text" inputmode="numeric" value="${d.descansoCustom}" oninput="updateNewLocalDraft({descansoCustom:this.value})"/></div>
-        <div style="flex:1;min-width:140px;"><div class="field-label">Máx semanal (hs)</div><input id="inp-local-maxhoras-custom" type="text" inputmode="numeric" value="${d.maxHorasCustom}" oninput="updateNewLocalDraft({maxHorasCustom:this.value})"/></div>
-      </div>`:""}
-    </div>
-    <div style="display:flex; gap:10px; margin:12px 0; flex-wrap:wrap;">
-      <button class="status-btn ${d.descansoTipo==='fijo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'fijo'})">Descanso fijo</button>
-      <button class="status-btn ${d.descansoTipo==='rotativo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'rotativo'})">Descanso rotativo</button>
-    </div>
-    <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
-      <button class="status-btn ${d.jornadaTipo==='continua'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'continua'})">Jornada continua</button>
-      <button class="status-btn ${d.jornadaTipo==='partida'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'partida'})">Jornada partida</button>
-    </div>
-    ${d.jornadaTipo==='continua' ? `<div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
-      <button class="status-btn ${d.mediaHora==='fija'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'fija'})">Media hora fija</button>
-      <button class="status-btn ${d.mediaHora==='variable'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'variable'})">Media hora variable</button>
-    </div>`:""}
-    <div style="display:flex; gap:10px;">
-      <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
-    </div>
-  </div>`;
-}
 
 function renderWizard(){
   let body = "";
@@ -685,6 +748,77 @@ function renderLocalTabs(){
   const tabs = state.locales.map(l=>`<button class="local-tab ${state.activeLocalId===l.id?'active':''}" onclick="selectLocalTab('${l.id}')">${l.nombre}</button>`).join("");
   return `<div class="local-tabs">${tabs}<button class="local-tab add" onclick="startAddLocal()">+ Agregar sucursal</button></div>`;
 }
+function renderCalendarControls(){
+  if(state.horarioDraft){
+    return `<div class="alert-card" style="border-left-color:var(--lime-dim); margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div><b>📋 Propuesta generada</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">Revisala, corregí lo que haga falta tocando las celdas, y confirmá.</div></div>
+        <div style="display:flex; gap:8px;">
+          <button style="border:1.5px solid var(--mint-dim); border-radius:999px; padding:9px 16px; font-size:12.5px; font-weight:700; color:var(--text-light-sec);" onclick="descartarDraft()">Descartar</button>
+          <button class="btn btn-primary" style="padding:9px 18px; font-size:12.5px;" ${state.saving?'disabled':''} onclick="confirmarDraft()">${state.saving?'Guardando…':'✅ Confirmar horario'}</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  return `<div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
+    <button class="btn btn-primary" onclick="generarAutomatico()">🤖 Generar automático</button>
+    <span style="font-size:12px; color:var(--text-light-sec);">o tocá las celdas de abajo para armarlo manual</span>
+  </div>`;
+}
+function renderNewLocalForm(){
+  if(!state.addingLocal) return "";
+  const d = state.newLocalDraft;
+  return `<div class="new-local-form">
+    <div class="field-label">Nombre de la sucursal</div>
+    <input id="inp-local-nombre" type="text" value="${d.nombre}" oninput="updateNewLocalDraft({nombre:this.value})" placeholder="Ej: Sucursal Centro" style="margin-bottom:14px;" />
+    ${Object.entries(RUBROS).map(([k,r])=>optRubro(k,r,d.rubro,"selectNewLocalRubro")).join("")}
+    <div class="opt ${d.rubro==='personalizado'?'selected':''}"><summary onclick="event.preventDefault(); updateNewLocalDraft({rubro:'personalizado'});"><span class="radio ${d.rubro==='personalizado'?'on':''}"></span><span class="opt-title">Personalizado</span></summary>
+      ${d.rubro==='personalizado' ? `<div style="padding:0 18px 18px 64px; display:flex; gap:10px; flex-wrap:wrap;">
+        <div style="flex:1;min-width:140px;"><div class="field-label">Descanso (hs)</div><input id="inp-local-descanso-custom" type="text" inputmode="numeric" value="${d.descansoCustom}" oninput="updateNewLocalDraft({descansoCustom:this.value})"/></div>
+        <div style="flex:1;min-width:140px;"><div class="field-label">Máx semanal (hs)</div><input id="inp-local-maxhoras-custom" type="text" inputmode="numeric" value="${d.maxHorasCustom}" oninput="updateNewLocalDraft({maxHorasCustom:this.value})"/></div>
+      </div>`:""}
+    </div>
+    <div style="display:flex; gap:10px; margin:12px 0; flex-wrap:wrap;">
+      <button class="status-btn ${d.descansoTipo==='fijo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'fijo'})">Descanso fijo</button>
+      <button class="status-btn ${d.descansoTipo==='rotativo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'rotativo'})">Descanso rotativo</button>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="status-btn ${d.jornadaTipo==='continua'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'continua'})">Jornada continua</button>
+      <button class="status-btn ${d.jornadaTipo==='partida'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'partida'})">Jornada partida</button>
+    </div>
+    ${d.jornadaTipo==='continua' ? `<div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="status-btn ${d.mediaHora==='fija'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'fija'})">Media hora fija</button>
+      <button class="status-btn ${d.mediaHora==='variable'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'variable'})">Media hora variable</button>
+    </div>`:""}
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
+    </div>
+  </div>`;
+}
+function renderReportes(){
+  const rows = state.employees.map(e=>{
+    const planificado = statsFor(e.id).horas;
+    const { workedH, restH } = computeWorkedMs(e.id);
+    const diff = Math.round((workedH-planificado)*10)/10;
+    const irregular = Math.abs(diff) >= 1;
+    return `<tr>
+      <td style="text-align:left; font-weight:700;">${e.name}</td>
+      <td class="mono" style="text-align:center;">${planificado}h</td>
+      <td class="mono" style="text-align:center;">${workedH}h</td>
+      <td class="mono" style="text-align:center;">${restH}h</td>
+      <td style="text-align:center;">${irregular ? `<span class="badge badge-pendiente">${diff>0?'+':''}${diff}h</span>` : `<span class="badge badge-aprobado">OK</span>`}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="card" style="margin-top:18px;">
+    <h3 style="margin:0 0 4px; font-size:15px;">⏱ Reportes — esta semana</h3>
+    <p class="sub" style="margin-bottom:14px;">Planificado (según el calendario) vs. realmente fichado. Se arma solo con cada marca de estado.</p>
+    <div style="overflow-x:auto;"><table style="min-width:480px;">
+      <thead><tr><th style="text-align:left;">Empleado</th><th>Planificado</th><th>Fichado</th><th>Descanso</th><th>Diferencia</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
 function renderDashboard(){
   const activeLocal = state.locales.find(l=>l.id===state.activeLocalId) || state.locales[0];
   const r = rulesForConfig(activeLocal ? activeLocal.config : null);
@@ -695,32 +829,25 @@ function renderDashboard(){
     totalAlerts += s.violations.length;
     s.violations.forEach(v=> alertLines.push(`<div class="alert-line">⚠️ <b>${e.name}</b> ${v}.</div>`));
   });
-  const statGrid = `<div class="stat-grid">
-    <div class="stat-card"><div class="stat-label">🏪 ${activeLocal?activeLocal.nombre:'Sin locales'}</div><div class="stat-value display">${r.label}</div><div class="stat-sub">Descanso ${r.descanso}h · máx ${r.maxHoras}h/sem</div></div>
-    <div class="stat-card"><div class="stat-label">👥 Equipo</div><div class="stat-value display">${state.employees.length} personas</div><div class="stat-sub">${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
-    <div class="stat-card"><div class="stat-label">${totalAlerts>0?'⚠️':'✅'} Alertas</div><div class="stat-value display ${totalAlerts>0?'tone-coral':'tone-lime'}">${totalAlerts>0?totalAlerts+' activas':'Todo en orden'}</div><div class="stat-sub">${totalAlerts>0?'Requieren atención':'Ningún incumplimiento esta semana'}</div></div>
-  </div>`;
-  const alertBlock = totalAlerts>0 ? `<div class="alert-card">${alertLines.join("")}</div>` : "";
+  const source = state.horarioDraft || state.turnos;
   const rowsHtml = state.employees.map(e=>{
     const cells = DAYS.map((_,d)=>`<td>${renderCellSelect(e.id,d)}</td>`).join("");
     return `<tr><td><div class="emp-cell-name">${e.name}</div><div class="emp-cell-role">${e.role}</div></td>${cells}</tr>`;
   }).join("");
-  const grid = `<div class="grid-card"><div style="overflow-x:auto;"><table style="min-width:640px;">
+  const calendario = `<div class="card" style="box-shadow:0 30px 70px -20px rgba(0,0,0,0.65);">
+    <h2 class="display" style="margin:0 0 3px; font-size:21px;">📅 Horario de la semana</h2>
+    <p class="sub" style="margin-bottom:6px;">Quién trabaja, cuándo, y en qué sucursal — ${activeLocal?activeLocal.nombre:'sin sucursal'} y el resto del equipo.</p>
+    ${renderCalendarControls()}
+    <div style="overflow-x:auto; border:1px solid var(--mint-dim); border-radius:var(--radius-sm);"><table style="min-width:640px;">
       <thead><tr><th>Empleado</th>${DAYS.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody>
     </table></div>
-    <div class="legend"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Mañana</span><span><span class="legend-swatch" style="background:var(--ink);"></span>Tarde</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige local + turno</span></div>
+    <div class="legend" style="padding-left:0; padding-right:0;"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Mañana</span><span><span class="legend-swatch" style="background:var(--ink);"></span>Tarde</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige local + turno</span></div>
   </div>`;
+  const reportes = renderReportes();
+  const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
   const estado = `<div class="side-card"><div class="side-title">Estado del equipo</div>
     ${state.employees.map(e=>{ const m = statusMeta(e.id);
       return `<button class="status-item" onclick="cycleStatus('${e.id}')"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></button>`;
-    }).join("")}
-  </div>`;
-  const empDetail = `<div class="accordion-card"><h3>Detalle por empleado</h3>
-    ${state.employees.map(e=>{ const s = statsFor(e.id);
-      const descansoTxt = s.hasFranco ? `cumplido (libre el ${DAYS[s.francoIdx]})` : "todavía pendiente esta semana";
-      const hist = (state.statusHistory[e.id]||[]).map(h=>`${h.estado} ${fmtTime(h.created_at)}`).join(" → ") || "sin marcas hoy";
-      return `<details class="acc"><summary><span>${e.name} · ${s.horas}h de ${s.r.maxHoras||'—'}h · base ${localName(primaryLocalId(e.id))}</span><svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></summary>
-      <div class="acc-body">Trabajó ${s.horas}h esta semana. Descanso semanal: ${descansoTxt}.${s.violations.length?'<br/>⚠️ '+s.violations.join(' · '):'<br/>Sin incumplimientos.'}<div class="history-line">🕐 Hoy: ${hist}</div></div></details>`;
     }).join("")}
   </div>`;
   const pendientes = state.ausenciasPendientes.length ? `<div class="accordion-card" style="padding-bottom:16px;"><h3>Faltas y certificados pendientes</h3>
@@ -736,7 +863,13 @@ function renderDashboard(){
       </div>
     </div>`).join("")}
   </div>` : "";
-  return `${renderLocalTabs()}${renderNewLocalForm()}${statGrid}${alertBlock}<div class="dash-grid">${grid}${estado}</div>${empDetail}${pendientes}
+  const statMini = `<div class="stat-grid" style="margin-top:18px;">
+    <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${activeLocal?activeLocal.nombre:'—'}</div><div style="font-size:13px; color:var(--text-light-sec);">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
+    <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">👥 Equipo</div><div style="font-size:13px; color:var(--text-light-sec);">${state.employees.length} personas · ${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
+  </div>`;
+  return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${reportes}${alertBlock}
+    <div class="dash-grid" style="margin-top:18px;">${estado}${pendientes}</div>
+    ${statMini}
     <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
 }
 function renderCellSelect(empId, dayIdx){
