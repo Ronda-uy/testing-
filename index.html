@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ronda</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+  :root{
+    --ink:#00312E;
+    --ink-2:#0B433D;
+    --ink-3:#124F48;
+    --forest:#25611E;
+    --lime:#BCED07;
+    --lime-dim:#96B406;
+    --lime-glow:rgba(188,237,7,0.35);
+    --amber:#F5C344;
+    --mint:#EEFDE6;
+    --mint-dim:#D7ECDA;
+    --coral:#FF6452;
+    --coral-dim:#E14A38;
+    --text-dark-sec:#9FC7BE;
+    --text-light-sec:#4C6B64;
+    --radius:18px;
+    --radius-sm:12px;
+    --shadow: 0 24px 60px -24px rgba(0,0,0,0.6), 0 10px 24px -12px rgba(0,0,0,0.4);
+    --shadow-soft: 0 14px 34px -18px rgba(0,0,0,0.5);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(1100px 600px at 15% -10%, rgba(188,237,7,0.08), transparent 60%),
+      radial-gradient(900px 500px at 110% 10%, rgba(37,97,30,0.35), transparent 55%),
+      var(--ink);
+    color:var(--mint);
+    font-family:'Manrope', system-ui, sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .display{ font-family:'Syne', sans-serif; font-weight:800; letter-spacing:-0.01em; }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+  a,button{ font-family:inherit; }
+  button{ cursor:pointer; border:none; background:none; }
+  label{ display:block; }
+
+  .nav{
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:12px; flex-wrap:wrap;
+    padding:14px 28px;
+    background:rgba(0,49,46,0.86);
+    backdrop-filter:blur(14px);
+    border-bottom:1px solid rgba(238,253,230,0.08);
+    box-shadow:0 12px 30px -18px rgba(0,0,0,0.6);
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand img{ width:38px; height:38px; border-radius:11px; display:block; box-shadow:0 0 0 1px rgba(238,253,230,0.12), 0 8px 20px -6px var(--lime-glow); }
+  .brand .word{ font-size:21px; line-height:1; }
+  .brand .tag{ font-size:11px; color:var(--text-dark-sec); margin-top:3px; }
+  .nav-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .pill{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:8px 14px; border-radius:999px; background:rgba(238,253,230,0.06); border:1px solid rgba(238,253,230,0.12); color:var(--mint); }
+  .pill-btn{ transition:transform .15s ease, background .15s ease; }
+  .pill-btn:hover{ transform:translateY(-1px); }
+  .pill-lime{ background:var(--lime); color:var(--ink); border-color:var(--lime); font-weight:700; }
+  .pill-ghost{ background:transparent; border:1px solid rgba(238,253,230,0.18); color:var(--text-dark-sec); }
+
+  main{ max-width:1080px; margin:0 auto; padding:36px 24px 80px; }
+  .wizard-wrap{ max-width:600px; margin:0 auto; }
+
+  .progress{ display:flex; align-items:center; gap:6px; margin-bottom:10px; }
+  .progress .seg{ display:flex; align-items:center; gap:6px; flex:1; }
+  .dot{ width:26px; height:26px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:700; border:1px solid rgba(238,253,230,0.25); color:var(--text-dark-sec); }
+  .dot.on{ background:var(--lime); color:var(--ink); border-color:var(--lime); }
+  .line{ height:1px; flex:1; background:rgba(238,253,230,0.18); }
+  .line.on{ background:var(--lime); }
+  .step-label{ font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--lime); font-weight:700; margin-bottom:22px; }
+
+  .card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow); padding:26px; }
+  .card + .card{ margin-top:18px; }
+  h2.title{ font-size:25px; margin:0 0 6px; }
+  p.sub{ font-size:14px; color:var(--text-light-sec); margin:0 0 20px; line-height:1.5; }
+
+  .opt{ background:#fff; border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:10px; overflow:hidden; }
+  .opt[open]{ border-color:var(--lime-dim); box-shadow:0 0 0 3px rgba(188,237,7,0.15); }
+  .opt.selected{ border-color:var(--lime-dim); background:#F7FFEB; }
+  .opt summary{ list-style:none; cursor:pointer; padding:16px 18px; display:flex; align-items:flex-start; gap:12px; }
+  .opt summary::-webkit-details-marker{ display:none; }
+  .opt-icon{ width:34px; height:34px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:var(--mint); color:var(--text-light-sec); font-weight:700; }
+  .opt-title{ font-weight:700; font-size:14.5px; flex:1; }
+  .opt-sub{ font-size:12.5px; color:var(--text-light-sec); margin-top:3px; line-height:1.4; }
+  .chev{ margin-left:auto; color:var(--text-light-sec); transition:transform .2s ease; flex-shrink:0; }
+  .opt[open] .chev{ transform:rotate(180deg); }
+  .opt-detail{ padding:0 18px 16px 64px; font-size:12.5px; color:var(--text-light-sec); line-height:1.5; }
+  .radio{ width:34px;height:34px;border-radius:50%;flex-shrink:0; display:flex;align-items:center;justify-content:center; background:var(--mint); border:1.5px solid var(--mint-dim); }
+  .radio.on{ background:var(--ink); border-color:var(--ink); }
+  .radio.on::after{ content:''; width:9px; height:9px; border-radius:50%; background:var(--lime); }
+
+  textarea, input[type=text]{ width:100%; border-radius:var(--radius-sm); border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); padding:14px 16px; font-size:14px; font-family:inherit; }
+  textarea{ min-height:100px; resize:vertical; }
+  textarea:focus, input:focus{ outline:none; border-color:var(--lime-dim); box-shadow:0 0 0 3px rgba(188,237,7,0.18); }
+  .field-label{ font-size:11px; font-weight:700; color:var(--text-light-sec); margin-bottom:5px; text-transform:uppercase; letter-spacing:.04em; }
+
+  .btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:13px 22px; border-radius:999px; font-weight:700; font-size:14px; transition:transform .15s ease, opacity .15s ease; }
+  .btn:hover{ transform:translateY(-1px); }
+  .btn-primary{ background:var(--ink); color:var(--mint); }
+  .btn-primary[disabled]{ opacity:.35; pointer-events:none; }
+  .btn-ghost{ color:var(--text-light-sec); }
+  .btn-block{ width:100%; }
+  .wizard-nav{ display:flex; justify-content:space-between; margin-top:22px; }
+
+  .emp-row{ display:flex; align-items:center; gap:12px; padding:12px 14px; background:#fff; border:1px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:8px;}
+  .avatar{ width:32px;height:32px;border-radius:50%; background:var(--lime); color:var(--ink); display:flex;align-items:center;justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;}
+  .emp-name{ font-weight:700; font-size:14px; }
+  .emp-role{ font-size:11.5px; color:var(--text-light-sec); }
+  .add-row{ display:flex; gap:8px; margin-bottom:16px; }
+  .add-row input{ flex:1; }
+
+  .summary-row{ display:flex; justify-content:space-between; align-items:center; font-size:13.5px; padding:9px 0; border-bottom:1px dashed var(--mint-dim); gap:10px; }
+  .summary-row:last-child{ border-bottom:none; }
+  .summary-row span:first-child{ color:var(--text-light-sec); flex-shrink:0; }
+  .summary-row b{ font-weight:700; text-align:right; }
+  .summary-row input{ text-align:right; border:none; background:transparent; font-weight:700; padding:0; width:auto; }
+
+  .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:18px; }
+  .stat-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:20px; }
+  .stat-label{ display:flex; align-items:center; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text-light-sec); margin-bottom:10px; }
+  .stat-value{ font-size:21px; }
+  .stat-sub{ font-size:11.5px; color:var(--text-light-sec); margin-top:3px; }
+  .tone-coral{ color:var(--coral-dim); }
+  .tone-lime{ color:var(--forest); }
+
+  .alert-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:16px 20px; border-left:5px solid var(--coral); margin-bottom:18px; }
+  .alert-line{ font-size:13px; padding:5px 0; line-height:1.5; }
+
+  .dash-grid{ display:grid; grid-template-columns:1fr 270px; gap:18px; }
+  @media (max-width:820px){ .dash-grid{ grid-template-columns:1fr; } .stat-grid{ grid-template-columns:1fr; } }
+
+  .grid-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
+  table{ width:100%; border-collapse:collapse; }
+  thead th{ text-align:center; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-light-sec); padding:16px 6px 10px; font-weight:700; }
+  thead th:first-child{ text-align:left; padding-left:20px; }
+  tbody td{ padding:6px; }
+  tbody td:first-child{ padding-left:20px; padding-right:6px; }
+  .emp-cell-name{ font-weight:700; font-size:13.5px; white-space:nowrap; }
+  .emp-cell-role{ font-size:10.5px; color:var(--text-light-sec); font-weight:500; }
+  .cell-btn{ width:100%; border-radius:10px; border:1.5px solid var(--mint-dim); font-size:10.5px; font-weight:700; padding:10px 4px; text-align:center; transition:transform .1s ease; }
+  .cell-btn:hover{ transform:scale(1.04); }
+  .cell-manana{ background:rgba(188,237,7,0.22); border-color:var(--lime-dim); color:var(--ink); }
+  .cell-tarde{ background:var(--ink); border-color:var(--ink); color:var(--mint); }
+  .cell-franco{ background:transparent; border-style:dashed; border-color:var(--forest); color:var(--forest); }
+  .cell-empty{ background:transparent; border-style:dashed; color:var(--text-light-sec); }
+  .legend{ display:flex; flex-wrap:wrap; gap:16px; padding:14px 20px; border-top:1px solid var(--mint-dim); font-size:11px; color:var(--text-light-sec); }
+  .legend-swatch{ width:12px; height:12px; border-radius:4px; display:inline-block; margin-right:6px; vertical-align:-2px; }
+
+  .side-card{ background:var(--ink-2); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px; height:fit-content; }
+  .side-title{ font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text-dark-sec); margin-bottom:12px; }
+  .status-item{ display:flex; align-items:center; justify-content:space-between; width:100%; padding:10px 12px; border-radius:10px; background:rgba(238,253,230,0.05); margin-bottom:6px; text-align:left; }
+  .status-name{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--mint); }
+  .status-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .status-label{ font-size:10px; }
+
+  .accordion-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:8px 20px; margin-top:18px; }
+  .accordion-card h3{ font-size:14px; padding:14px 0 4px; margin:0; }
+  details.acc{ border-top:1px solid var(--mint-dim); }
+  details.acc:last-child{ padding-bottom:6px; }
+  details.acc summary{ list-style:none; cursor:pointer; padding:14px 0; display:flex; align-items:center; justify-content:space-between; font-weight:700; font-size:13.5px; gap:10px; }
+  details.acc summary::-webkit-details-marker{ display:none; }
+  details.acc[open] summary{ color:var(--forest); }
+  details.acc .acc-body{ font-size:13px; color:var(--text-light-sec); line-height:1.6; padding-bottom:14px; }
+  details.acc .chev{ transition:transform .2s ease; flex-shrink:0; }
+  details.acc[open] .chev{ transform:rotate(180deg); }
+
+  .footer-note{ text-align:center; font-size:11px; color:var(--text-dark-sec); margin-top:26px; }
+
+  /* Employee side */
+  .greet{ font-size:24px; margin-bottom:2px; }
+  .week-strip{ display:flex; gap:6px; margin:16px 0 4px; }
+  .strip-pill{ flex:1; text-align:center; padding:10px 2px; border-radius:10px; font-size:10px; font-weight:800; }
+  .strip-day{ font-size:8.5px; opacity:.65; display:block; margin-bottom:4px; text-transform:uppercase; letter-spacing:.05em; }
+  .status-toggle{ display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .status-btn{ flex:1; min-width:110px; padding:14px 10px; border-radius:12px; border:1.5px solid var(--mint-dim); background:#fff; font-weight:700; font-size:12.5px; text-align:center; color:var(--ink); }
+  .status-btn.active{ border-color:var(--ink); background:var(--ink); color:var(--mint); }
+  .libre-banner{ background:rgba(188,237,7,0.2); border:1.5px dashed var(--lime-dim); border-radius:var(--radius-sm); padding:20px; text-align:center; font-weight:700; color:var(--forest); font-size:15px; }
+  .link-quiet{ font-size:12.5px; color:var(--text-light-sec); text-decoration:underline; margin-top:16px; display:inline-block; }
+
+  /* Multi-sucursal / historial / ausencias */
+  .local-tabs{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  .local-tab{ padding:9px 16px; border-radius:999px; font-size:12.5px; font-weight:700; border:1.5px solid var(--mint-dim); background:var(--mint); color:var(--text-light-sec); }
+  .local-tab.active{ background:var(--ink); border-color:var(--ink); color:var(--mint); }
+  .local-tab.add{ border-style:dashed; color:var(--forest); background:transparent; }
+
+  .cell-select{ width:100%; border-radius:10px; border:1.5px solid var(--mint-dim); font-size:9.5px; font-weight:700; padding:9px 2px; text-align:center; text-align-last:center; -webkit-appearance:none; appearance:none; }
+
+  .new-local-form{ background:#fff; border:1.5px dashed var(--lime-dim); border-radius:var(--radius-sm); padding:18px; margin-top:14px; }
+
+  .pending-card{ background:#fff; border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); padding:14px 16px; margin-bottom:10px; }
+  .pending-thumb{ max-width:160px; border-radius:10px; margin:8px 0; display:block; }
+  .badge{ font-size:10px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase; letter-spacing:.04em; display:inline-block; }
+  .badge-pendiente{ background:rgba(245,195,68,0.3); color:#7A5C0A; }
+  .badge-aprobado{ background:rgba(188,237,7,0.3); color:var(--forest); }
+  .badge-rechazado{ background:rgba(255,100,82,0.22); color:var(--coral-dim); }
+  .history-line{ font-size:11.5px; color:var(--text-light-sec); margin-top:6px; line-height:1.6; }
+  input[type=file]{ font-size:12.5px; }
+  input[type=date]{ width:100%; border-radius:var(--radius-sm); border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); padding:12px 14px; font-size:14px; font-family:inherit; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="brand">
+    <img src="data:image/png;base64,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" alt="Ronda" />
+    <div>
+      <div class="word display">Ronda</div>
+      <div class="tag">Organizá los turnos. Coordiná el equipo.</div>
+    </div>
+  </div>
+  <div class="nav-right" id="navRight"></div>
+</div>
+
+<main id="app"></main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://vzihlzoqnqowqidxvuth.supabase.co";
+const SUPABASE_KEY = "sb_publishable_u49hetpJhEM5BvBOsYcbhA_KRpC-IH4";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+});
+
+const RUBROS = {
+  comercio: { label:"Comercio", descanso:36, maxHoras:44, nota:"Régimen general de comercio y servicios.",
+    detalle:"El descanso semanal mínimo para comercio es de 36 horas consecutivas (Ley 7.318 y Decreto 437/88). La jornada máxima diaria es de 8 horas y el máximo semanal es de 44 horas." },
+  gastronomia: { label:"Gastronomía", descanso:36, maxHoras:44, nota:"Base de comercio — revisá con tu contador las cláusulas propias del convenio gastronómico.",
+    detalle:"Usa la misma base legal que comercio (36h de descanso, 44h semanales), pero el convenio colectivo del sector puede agregar condiciones particulares." },
+  industria: { label:"Industria", descanso:24, maxHoras:48, nota:"Régimen general industrial.",
+    detalle:"El descanso semanal mínimo para industria es de 24 horas consecutivas. La jornada máxima diaria es de 8 horas y el máximo semanal es de 48 horas." },
+};
+const DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+const STEP_LABELS = ["Negocio","Sucursales","Equipo","Confirmar"];
+
+function freshState(){
+  return {
+    role:"admin", empresaId:null, empresaName:"",
+    locales:[], activeLocalId:null,
+    employeeSession:null,
+    view:"wizard", step:0,
+    employees:[], turnos:{}, clockStatus:{}, statusHistory:{},
+    ausenciasPendientes:[], misAusencias:[],
+    addingLocal:false, newLocalDraft:null,
+    reportandoFalta:false, nuevaAusencia:null,
+    error:null, saving:false,
+  };
+}
+let state = freshState();
+let loaded = false;
+
+function getEmpresaIdFromUrl(){ return new URLSearchParams(window.location.search).get("empresa"); }
+function setEmpresaIdInUrl(id){ const url = new URL(window.location); url.searchParams.set("empresa", id); window.history.replaceState({}, "", url); }
+
+async function loadState(){
+ try{
+  const empresaId = getEmpresaIdFromUrl();
+  if(empresaId){
+    const { data: empresaRow, error: e1 } = await sb.from("empresas").select("*").eq("id", empresaId).single();
+    if(!e1 && empresaRow){
+      const { data: locs } = await sb.from("locales").select("*").eq("empresa_id", empresaId).order("created_at");
+      const { data: emps } = await sb.from("empleados").select("*").eq("empresa_id", empresaId).order("created_at");
+      const empIds = (emps||[]).map(e=>e.id);
+      let turnosRows = [];
+      if(empIds.length){ const { data: t } = await sb.from("turnos").select("*").in("empleado_id", empIds); turnosRows = t||[]; }
+      let logRows = [];
+      if(empIds.length){
+        const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+        const { data: l } = await sb.from("estados_log").select("*").in("empleado_id", empIds).gte("created_at", startOfDay.toISOString()).order("created_at");
+        logRows = l||[];
+      }
+      let pendRows = [];
+      if(empIds.length){
+        const { data: p } = await sb.from("ausencias").select("*").in("empleado_id", empIds).eq("estado_revision","pendiente").order("created_at",{ascending:false});
+        pendRows = p||[];
+      }
+      state.empresaId = empresaId;
+      state.empresaName = empresaRow.nombre;
+      state.locales = locs||[];
+      state.activeLocalId = (locs&&locs[0]) ? locs[0].id : null;
+      state.employees = (emps||[]).map(row=>({id:row.id, name:row.nombre, role:row.rol||"Sin definir"}));
+      state.turnos = {}; state.clockStatus = {}; state.statusHistory = {};
+      (emps||[]).forEach(row=>{ state.turnos[row.id]=Array(7).fill(null); state.clockStatus[row.id]=row.estado||"afuera"; state.statusHistory[row.id]=[]; });
+      turnosRows.forEach(t=>{ if(state.turnos[t.empleado_id]) state.turnos[t.empleado_id][t.dia] = {tipo:t.tipo, localId:t.local_id}; });
+      logRows.forEach(l=>{ if(state.statusHistory[l.empleado_id]) state.statusHistory[l.empleado_id].push({estado:l.estado, created_at:l.created_at}); });
+      state.ausenciasPendientes = (pendRows||[]).map(p=>{ const emp = (emps||[]).find(e=>e.id===p.empleado_id); return {...p, empleadoNombre: emp?emp.nombre:"—"}; });
+      state.view = "dashboard";
+    } else {
+      state.error = "No encontramos ese negocio — revisá el link o creá uno nuevo.";
+    }
+  }
+ } catch(err){
+  state.error = "No se pudo cargar: " + ((err && err.message) ? err.message : "error desconocido");
+ } finally {
+  loaded = true;
+  render();
+ }
+}
+
+function rulesForConfig(config){
+  if(!config) return { label:"Sin definir", descanso:0, maxHoras:0 };
+  if(config.rubro==="personalizado"){
+    return { label:"Personalizado", descanso:Number(config.descansoCustom)||0, maxHoras:Number(config.maxHorasCustom)||0 };
+  }
+  const r = RUBROS[config.rubro || "comercio"];
+  return r ? { label:r.label, descanso:r.descanso, maxHoras:r.maxHoras } : { label:"Sin definir", descanso:0, maxHoras:0 };
+}
+function primaryLocalId(empId){
+  const days = state.turnos[empId]||[];
+  const counts = {};
+  days.forEach(d=>{ if(d && d.localId){ counts[d.localId]=(counts[d.localId]||0)+1; } });
+  let best=null, bestN=0;
+  Object.entries(counts).forEach(([id,n])=>{ if(n>bestN){ best=id; bestN=n; } });
+  return best || (state.locales[0] ? state.locales[0].id : null);
+}
+function employeeRules(empId){
+  const lid = primaryLocalId(empId);
+  const loc = state.locales.find(l=>l.id===lid);
+  return loc ? rulesForConfig(loc.config) : { label:"Sin local", descanso:0, maxHoras:0 };
+}
+function localName(id){ const l = state.locales.find(l=>l.id===id); return l?l.nombre:"—"; }
+
+function update(patch){ Object.assign(state, patch); render(); }
+
+function canAdvance(){
+  const s = state.step;
+  if(s===0) return !!(state.empresaName && state.empresaName.trim());
+  if(s===1) return state.locales.length>0;
+  if(s===2) return state.employees.length>0;
+  return true;
+}
+function goStep(delta){ update({ step: Math.max(0, state.step+delta) }); }
+function goStepTo(n){ if(n<=state.step || canAdvance()) update({ step:n }); }
+
+async function activarPanel(){
+  state.saving = true; state.error=null; render();
+  try{
+    if(!state.empresaId){
+      const { data: emp, error: e1 } = await sb.from("empresas").insert({ nombre: state.empresaName }).select().single();
+      if(e1) throw new Error("No se pudo crear el negocio: "+e1.message);
+      const newLocales = [];
+      for(const loc of state.locales){
+        const { data: ld, error: le } = await sb.from("locales").insert({ empresa_id:emp.id, nombre:loc.nombre, config:loc.config }).select().single();
+        if(le) throw new Error("No se pudo crear la sucursal '"+loc.nombre+"': "+le.message);
+        newLocales.push(ld);
+      }
+      const newEmployees=[], newTurnos={}, newStatus={};
+      for(const e of state.employees){
+        const { data: ed, error: ee } = await sb.from("empleados").insert({ empresa_id:emp.id, nombre:e.name, rol:e.role, estado:"afuera" }).select().single();
+        if(ee) throw new Error("No se pudo agregar a "+e.name+": "+ee.message);
+        newEmployees.push({id:ed.id,name:ed.nombre,role:ed.rol}); newTurnos[ed.id]=Array(7).fill(null); newStatus[ed.id]="afuera";
+      }
+      state.empresaId=emp.id; state.empresaName=emp.nombre;
+      state.locales=newLocales; state.activeLocalId = newLocales[0]?newLocales[0].id:null;
+      state.employees=newEmployees; state.turnos=newTurnos; state.clockStatus=newStatus; state.statusHistory={};
+      setEmpresaIdInUrl(emp.id);
+    } else {
+      const { error } = await sb.from("empresas").update({ nombre: state.empresaName }).eq("id", state.empresaId);
+      if(error) throw new Error("No se pudo guardar: "+error.message);
+    }
+    state.view="dashboard";
+  } catch(err){
+    state.error = (err && err.message) ? err.message : "Ocurrió un error inesperado al activar el panel.";
+  } finally {
+    state.saving=false; render();
+  }
+}
+
+function switchRole(r){ state.role=r; if(r==="admin" && state.empresaId) state.view="dashboard"; render(); }
+function resetAll(){
+  const url = new URL(window.location); url.searchParams.delete("empresa"); window.history.replaceState({}, "", url);
+  state = freshState(); render();
+}
+function copyLink(){
+  navigator.clipboard.writeText(window.location.href).then(()=>{
+    const btn = document.getElementById("copyLinkBtn");
+    if(btn){ const orig = btn.textContent; btn.textContent="¡Copiado!"; setTimeout(()=>{ btn.textContent=orig; }, 1500); }
+  });
+}
+function todayIndex(){ return (new Date().getDay()+6)%7; }
+function fmtTime(iso){ return new Date(iso).toLocaleTimeString("es-UY",{hour:"2-digit",minute:"2-digit"}); }
+
+/* ---- Sucursales ---- */
+function selectLocalTab(id){ state.activeLocalId=id; render(); }
+function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"" }; render(); }
+function updateNewLocalDraft(patch){ Object.assign(state.newLocalDraft, patch); render(); }
+function cancelAddLocal(){ state.addingLocal=false; state.newLocalDraft=null; render(); }
+function removeLocalDraft(id){
+  if(state.empresaId) return;
+  state.locales = state.locales.filter(l=>l.id!==id);
+  if(state.activeLocalId===id) state.activeLocalId = state.locales[0]?state.locales[0].id:null;
+  render();
+}
+async function saveNewLocal(){
+  const d = state.newLocalDraft;
+  if(!d.nombre.trim() || !d.rubro || !d.descansoTipo || !d.jornadaTipo || (d.jornadaTipo==='continua' && !d.mediaHora)){
+    state.error="Completá todos los campos de la sucursal."; render(); return;
+  }
+  if(d.rubro==="personalizado" && (!(Number(d.descansoCustom)>0) || !(Number(d.maxHorasCustom)>0))){
+    state.error="Completá el descanso y el máximo de horas personalizado."; render(); return;
+  }
+  const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom };
+  state.error=null;
+  if(!state.empresaId){
+    const id = "tmp"+Date.now();
+    state.locales.push({id, nombre:d.nombre, config});
+    state.activeLocalId = id;
+  } else {
+    const { data, error } = await sb.from("locales").insert({ empresa_id:state.empresaId, nombre:d.nombre, config }).select().single();
+    if(error){ state.error="No se pudo crear la sucursal."; render(); return; }
+    state.locales.push(data);
+    state.activeLocalId = data.id;
+  }
+  state.addingLocal=false; state.newLocalDraft=null;
+  render();
+}
+
+/* ---- Grilla de turnos ---- */
+function cellValue(entry){ if(!entry) return ""; if(entry.tipo==="franco") return "franco"; return entry.tipo+"|"+entry.localId; }
+function cellDisplayClass(entry){ if(!entry) return "cell-empty"; if(entry.tipo==="franco") return "cell-franco"; return entry.tipo==="manana"?"cell-manana":"cell-tarde"; }
+async function setCell(empId, dayIdx, value){
+  let entry = null;
+  if(value==="franco") entry = {tipo:"franco", localId:null};
+  else if(value){ const [tipo, localId] = value.split("|"); entry = {tipo, localId}; }
+  const days = (state.turnos[empId]||Array(7).fill(null)).slice();
+  days[dayIdx]=entry;
+  state.turnos[empId]=days;
+  render();
+  if(entry){
+    const { error } = await sb.from("turnos").upsert({ empleado_id:empId, dia:dayIdx, tipo:entry.tipo, local_id:entry.localId||null }, { onConflict:"empleado_id,dia" });
+    if(error){ state.error="No se guardó el turno: "+error.message; render(); }
+  } else {
+    const { error } = await sb.from("turnos").delete().eq("empleado_id", empId).eq("dia", dayIdx);
+    if(error){ state.error="No se pudo vaciar el turno."; render(); }
+  }
+}
+async function addEmployee(){
+  const input = document.getElementById("newEmpName");
+  const name = input.value.trim();
+  if(!name) return;
+  if(!state.empresaId){
+    const id = "tmp"+Date.now();
+    state.employees.push({id, name, role:"Sin definir"});
+    input.value=""; render();
+    return;
+  }
+  const { data, error } = await sb.from("empleados").insert({ empresa_id:state.empresaId, nombre:name, rol:"Sin definir", estado:"afuera" }).select().single();
+  if(error){ state.error="No se pudo agregar el empleado."; render(); return; }
+  state.employees.push({id:data.id,name:data.nombre,role:data.rol});
+  state.turnos[data.id]=Array(7).fill(null);
+  state.clockStatus[data.id]="afuera";
+  state.statusHistory[data.id]=[];
+  input.value=""; render();
+}
+
+/* ---- Estado + historial ---- */
+async function setStatus(empId, val){
+  const todayEntry = (state.turnos[empId]||[])[todayIndex()];
+  if(todayEntry && todayEntry.tipo==="franco") return;
+  state.clockStatus[empId]=val;
+  const nowIso = new Date().toISOString();
+  state.statusHistory[empId] = [...(state.statusHistory[empId]||[]), {estado:val, created_at:nowIso}];
+  render();
+  await sb.from("empleados").update({estado:val}).eq("id", empId);
+  const { error } = await sb.from("estados_log").insert({ empleado_id:empId, estado:val });
+  if(error){ state.error="No se guardó el historial."; render(); }
+}
+function cycleStatus(empId){
+  const order=["afuera","local","descanso"];
+  const cur = state.clockStatus[empId]||"afuera";
+  setStatus(empId, order[(order.indexOf(cur)+1)%order.length]);
+}
+function statsFor(empId){
+  const r = employeeRules(empId);
+  const days = state.turnos[empId]||Array(7).fill(null);
+  const turnos = days.filter(d=>d && (d.tipo==="manana"||d.tipo==="tarde")).length;
+  const horas = turnos*8;
+  const hasFranco = days.some(d=>d && d.tipo==="franco");
+  const francoIdx = days.findIndex(d=>d && d.tipo==="franco");
+  const violations=[];
+  if(!hasFranco) violations.push(`todavía no tuvo su descanso semanal (mínimo ${r.descanso}h)`);
+  if(r.maxHoras>0 && horas > r.maxHoras) violations.push(`se pasó ${horas-r.maxHoras}h del máximo semanal (lleva ${horas}h de ${r.maxHoras}h)`);
+  return { turnos, horas, hasFranco, francoIdx, violations, r };
+}
+function statusMeta(empId){
+  const todayEntry = (state.turnos[empId]||[])[todayIndex()];
+  if(todayEntry && todayEntry.tipo==="franco") return { text:"Día libre", color:"transparent", outline:true };
+  const st = state.clockStatus[empId]||"afuera";
+  if(st==="local") return { text:"En el local", color:"var(--lime)" };
+  if(st==="descanso") return { text:"En su descanso", color:"var(--amber)" };
+  return { text:"Afuera", color:"var(--text-dark-sec)", dim:true };
+}
+
+/* ---- Ausencias / certificados ---- */
+function resizeImageToBase64(file, maxWidth, cb){
+  const reader = new FileReader();
+  reader.onload = function(e){
+    const img = new Image();
+    img.onload = function(){
+      const scale = Math.min(1, maxWidth/img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width*scale); canvas.height = Math.round(img.height*scale);
+      canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+      cb(canvas.toDataURL("image/jpeg", 0.7));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function startReportarFalta(){ state.reportandoFalta=true; state.nuevaAusencia={ fecha:new Date().toISOString().slice(0,10), motivo:"", certificado_b64:null }; render(); }
+function cancelReportarFalta(){ state.reportandoFalta=false; state.nuevaAusencia=null; render(); }
+function updateNuevaAusencia(patch){ Object.assign(state.nuevaAusencia, patch); render(); }
+function handleCertificadoFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  resizeImageToBase64(file, 480, (b64)=>{ state.nuevaAusencia.certificado_b64=b64; render(); });
+}
+async function submitAusencia(){
+  const me = state.employees.find(e=>e.id===state.employeeSession);
+  if(!me) return;
+  const a = state.nuevaAusencia;
+  const { data, error } = await sb.from("ausencias").insert({ empleado_id:me.id, fecha:a.fecha, motivo:a.motivo, certificado_b64:a.certificado_b64, estado_revision:"pendiente" }).select().single();
+  if(error){ state.error="No se pudo reportar la falta."; render(); return; }
+  state.misAusencias = [data, ...(state.misAusencias||[])];
+  state.reportandoFalta=false; state.nuevaAusencia=null; state.error=null;
+  render();
+}
+async function loadMisAusencias(empId){
+  const { data } = await sb.from("ausencias").select("*").eq("empleado_id", empId).order("created_at",{ascending:false});
+  state.misAusencias = data||[];
+  render();
+}
+async function reviewAusencia(id, decision){
+  const { error } = await sb.from("ausencias").update({ estado_revision:decision }).eq("id", id);
+  if(error){ state.error="No se pudo actualizar."; render(); return; }
+  state.ausenciasPendientes = state.ausenciasPendientes.filter(a=>a.id!==id);
+  render();
+}
+
+/* ---- Nav ---- */
+function renderNavRight(){
+  const el = document.getElementById("navRight");
+  let html = `<button class="pill ${state.role==='admin'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('admin')">Encargado</button>
+    <button class="pill ${state.role==='employee'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('employee')">Equipo</button>`;
+  if(state.role==="admin" && state.view==="dashboard"){
+    html += `<button id="copyLinkBtn" class="pill pill-lime pill-btn" onclick="copyLink()">🔗 Copiar link del equipo</button>
+      <button class="pill pill-ghost pill-btn" onclick="update({view:'wizard', step:0})">Reconfigurar</button>`;
+  }
+  html += `<button class="pill pill-ghost pill-btn" title="Deja de ver este negocio en este navegador — no borra nada" onclick="resetAll()">Salir</button>`;
+  el.innerHTML = html;
+}
+
+/* ---- Render con foco preservado ---- */
+function render(){
+  const active = document.activeElement;
+  const activeId = active && active.id ? active.id : null;
+  const selStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+  const selEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+
+  renderNavRight();
+  const app = document.getElementById("app");
+  if(!loaded){ app.innerHTML = `<div style="text-align:center;padding:100px 20px;color:var(--text-dark-sec);">Cargando…</div>`; return; }
+  let html = "";
+  if(state.error){ html += `<div class="wizard-wrap"><div class="alert-card" style="border-left-color:var(--coral);"><div class="alert-line">⚠️ ${state.error}</div></div></div>`; }
+  if(state.role==="employee"){
+    if(!state.empresaId){ html += renderEmployeeNotReady(); }
+    else if(!state.employeeSession){ html += renderEmployeeJoin(); }
+    else { html += renderEmployeeDashboard(); }
+  } else {
+    html += state.view==="wizard" ? renderWizard() : renderDashboard();
+  }
+  app.innerHTML = html;
+
+  if(activeId){
+    const el = document.getElementById(activeId);
+    if(el){
+      el.focus();
+      if(selStart!=null && el.setSelectionRange){
+        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+      }
+    }
+  }
+}
+
+/* ---- Wizard ---- */
+function renderProgress(){
+  let segs = STEP_LABELS.map((l,i)=>{
+    const dotOn = i<=state.step, lineOn = i<state.step;
+    return `<div class="seg"><button class="dot ${dotOn?'on':''}" onclick="goStepTo(${i})">${i<state.step?"✓":(i+1)}</button>${i<STEP_LABELS.length-1?`<div class="line ${lineOn?'on':''}"></div>`:""}</div>`;
+  }).join("");
+  return `<div class="progress">${segs}</div><div class="step-label">Paso ${state.step+1} de ${STEP_LABELS.length}</div>`;
+}
+function optRubro(key, r, selected, onSel){
+  const sel = selected===key;
+  return `<details class="opt ${sel?'selected':''}" ${sel?'open':''}>
+    <summary onclick="event.preventDefault(); ${onSel}('${key}');">
+      <span class="radio ${sel?'on':''}"></span>
+      <span style="flex:1"><div class="opt-title">${r.label} — descanso ${r.descanso}h, máx ${r.maxHoras}h/sem</div><div class="opt-sub">${r.nota}</div></span>
+      <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </summary>
+    <div class="opt-detail">${r.detalle}</div>
+  </details>`;
+}
+function selectNewLocalRubro(key){ updateNewLocalDraft({rubro:key}); }
+
+function renderLocalCards(){
+  if(!state.locales.length) return `<p style="font-size:13px;color:var(--text-light-sec);margin-bottom:14px;">Todavía no agregaste ninguna sucursal.</p>`;
+  return state.locales.map(l=>{
+    const r = rulesForConfig(l.config);
+    return `<div class="emp-row">
+      <div class="avatar" style="background:var(--forest);color:var(--mint);">🏪</div>
+      <div style="flex:1;"><div class="emp-name">${l.nombre}</div><div class="emp-role">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
+      ${!state.empresaId ? `<button class="btn btn-ghost" style="padding:6px 10px; font-size:11px;" onclick="removeLocalDraft('${l.id}')">Quitar</button>` : ""}
+    </div>`;
+  }).join("");
+}
+function renderNewLocalForm(){
+  if(!state.addingLocal) return "";
+  const d = state.newLocalDraft;
+  return `<div class="new-local-form">
+    <div class="field-label">Nombre de la sucursal</div>
+    <input id="inp-local-nombre" type="text" value="${d.nombre}" oninput="updateNewLocalDraft({nombre:this.value})" placeholder="Ej: Sucursal Centro" style="margin-bottom:14px;" />
+    ${Object.entries(RUBROS).map(([k,r])=>optRubro(k,r,d.rubro,"selectNewLocalRubro")).join("")}
+    <div class="opt ${d.rubro==='personalizado'?'selected':''}"><summary onclick="event.preventDefault(); updateNewLocalDraft({rubro:'personalizado'});"><span class="radio ${d.rubro==='personalizado'?'on':''}"></span><span class="opt-title">Personalizado</span></summary>
+      ${d.rubro==='personalizado' ? `<div style="padding:0 18px 18px 64px; display:flex; gap:10px; flex-wrap:wrap;">
+        <div style="flex:1;min-width:140px;"><div class="field-label">Descanso (hs)</div><input id="inp-local-descanso-custom" type="text" inputmode="numeric" value="${d.descansoCustom}" oninput="updateNewLocalDraft({descansoCustom:this.value})"/></div>
+        <div style="flex:1;min-width:140px;"><div class="field-label">Máx semanal (hs)</div><input id="inp-local-maxhoras-custom" type="text" inputmode="numeric" value="${d.maxHorasCustom}" oninput="updateNewLocalDraft({maxHorasCustom:this.value})"/></div>
+      </div>`:""}
+    </div>
+    <div style="display:flex; gap:10px; margin:12px 0; flex-wrap:wrap;">
+      <button class="status-btn ${d.descansoTipo==='fijo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'fijo'})">Descanso fijo</button>
+      <button class="status-btn ${d.descansoTipo==='rotativo'?'active':''}" onclick="updateNewLocalDraft({descansoTipo:'rotativo'})">Descanso rotativo</button>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="status-btn ${d.jornadaTipo==='continua'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'continua'})">Jornada continua</button>
+      <button class="status-btn ${d.jornadaTipo==='partida'?'active':''}" onclick="updateNewLocalDraft({jornadaTipo:'partida'})">Jornada partida</button>
+    </div>
+    ${d.jornadaTipo==='continua' ? `<div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="status-btn ${d.mediaHora==='fija'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'fija'})">Media hora fija</button>
+      <button class="status-btn ${d.mediaHora==='variable'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'variable'})">Media hora variable</button>
+    </div>`:""}
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
+    </div>
+  </div>`;
+}
+
+function renderWizard(){
+  let body = "";
+  if(state.step===0){
+    body = `<h2 class="title display">¿Cómo se llama tu negocio?</h2><p class="sub">Puede tener una o varias sucursales — las agregamos en el próximo paso.</p>
+    <input id="inp-empresa-nombre" type="text" value="${state.empresaName||''}" oninput="update({empresaName:this.value})" placeholder="Ej: Los Robles S.A." />`;
+  } else if(state.step===1){
+    body = `<h2 class="title display">Sucursales</h2><p class="sub">Agregá una o más — cada una con su propio rubro y reglas, igual que vas a hacer con el equipo.</p>
+    ${renderLocalCards()}
+    ${state.addingLocal ? renderNewLocalForm() : `<button class="btn btn-ghost" style="border:1.5px dashed var(--mint-dim); border-radius:12px; width:100%; padding:14px;" onclick="startAddLocal()">+ Agregar sucursal</button>`}`;
+  } else if(state.step===2){
+    body = `<h2 class="title display">Invitá a tu equipo</h2><p class="sub">Pertenecen al negocio, no a una sucursal puntual — después los asignás día por día.</p>
+    <div class="add-row"><input type="text" id="newEmpName" placeholder="Nombre del empleado" onkeydown="if(event.key==='Enter')addEmployee()"/><button class="btn btn-primary" onclick="addEmployee()">+ Agregar</button></div>
+    ${state.employees.map(e=>`<div class="emp-row"><div class="avatar">${e.name[0]}</div><div><div class="emp-name">${e.name}</div><div class="emp-role">${e.role}</div></div></div>`).join("")}`;
+  } else if(state.step===3){
+    body = `<h2 class="title display">Listo para activar</h2><p class="sub">Se guarda en tu base de datos real, accesible desde cualquier dispositivo.</p>
+    <div class="card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:18px 20px; margin-bottom:18px;">
+      <div class="summary-row"><span>Negocio</span><input id="inp-empresa-nombre" type="text" value="${state.empresaName}" oninput="update({empresaName:this.value})"/></div>
+      <div class="summary-row"><span>Sucursales</span><b>${state.locales.map(l=>l.nombre).join(', ')}</b></div>
+      <div class="summary-row"><span>Equipo</span><b>${state.employees.length} personas</b></div>
+    </div>
+    <button class="btn btn-primary btn-block" ${state.saving?'disabled':''} onclick="activarPanel()">${state.saving?'Guardando…':'Activar panel operativo →'}</button>`;
+  }
+  const nav = state.step < STEP_LABELS.length-1 ? `<div class="wizard-nav"><button class="btn btn-ghost" style="${state.step===0?'visibility:hidden':''}" onclick="goStep(-1)">← Atrás</button><button class="btn btn-primary" ${canAdvance()?'':'disabled'} onclick="goStep(1)">Siguiente →</button></div>` : "";
+  return `<div class="wizard-wrap">${renderProgress()}<div class="card">${body}</div>${nav}</div>`;
+}
+
+/* ---- Dashboard ---- */
+function renderLocalTabs(){
+  const tabs = state.locales.map(l=>`<button class="local-tab ${state.activeLocalId===l.id?'active':''}" onclick="selectLocalTab('${l.id}')">${l.nombre}</button>`).join("");
+  return `<div class="local-tabs">${tabs}<button class="local-tab add" onclick="startAddLocal()">+ Agregar sucursal</button></div>`;
+}
+function renderDashboard(){
+  const activeLocal = state.locales.find(l=>l.id===state.activeLocalId) || state.locales[0];
+  const r = rulesForConfig(activeLocal ? activeLocal.config : null);
+  let totalAlerts = 0;
+  const alertLines = [];
+  state.employees.forEach(e=>{
+    const s = statsFor(e.id);
+    totalAlerts += s.violations.length;
+    s.violations.forEach(v=> alertLines.push(`<div class="alert-line">⚠️ <b>${e.name}</b> ${v}.</div>`));
+  });
+  const statGrid = `<div class="stat-grid">
+    <div class="stat-card"><div class="stat-label">🏪 ${activeLocal?activeLocal.nombre:'Sin locales'}</div><div class="stat-value display">${r.label}</div><div class="stat-sub">Descanso ${r.descanso}h · máx ${r.maxHoras}h/sem</div></div>
+    <div class="stat-card"><div class="stat-label">👥 Equipo</div><div class="stat-value display">${state.employees.length} personas</div><div class="stat-sub">${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
+    <div class="stat-card"><div class="stat-label">${totalAlerts>0?'⚠️':'✅'} Alertas</div><div class="stat-value display ${totalAlerts>0?'tone-coral':'tone-lime'}">${totalAlerts>0?totalAlerts+' activas':'Todo en orden'}</div><div class="stat-sub">${totalAlerts>0?'Requieren atención':'Ningún incumplimiento esta semana'}</div></div>
+  </div>`;
+  const alertBlock = totalAlerts>0 ? `<div class="alert-card">${alertLines.join("")}</div>` : "";
+  const rowsHtml = state.employees.map(e=>{
+    const cells = DAYS.map((_,d)=>`<td>${renderCellSelect(e.id,d)}</td>`).join("");
+    return `<tr><td><div class="emp-cell-name">${e.name}</div><div class="emp-cell-role">${e.role}</div></td>${cells}</tr>`;
+  }).join("");
+  const grid = `<div class="grid-card"><div style="overflow-x:auto;"><table style="min-width:640px;">
+      <thead><tr><th>Empleado</th>${DAYS.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody>
+    </table></div>
+    <div class="legend"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Mañana</span><span><span class="legend-swatch" style="background:var(--ink);"></span>Tarde</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige local + turno</span></div>
+  </div>`;
+  const estado = `<div class="side-card"><div class="side-title">Estado del equipo</div>
+    ${state.employees.map(e=>{ const m = statusMeta(e.id);
+      return `<button class="status-item" onclick="cycleStatus('${e.id}')"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></button>`;
+    }).join("")}
+  </div>`;
+  const empDetail = `<div class="accordion-card"><h3>Detalle por empleado</h3>
+    ${state.employees.map(e=>{ const s = statsFor(e.id);
+      const descansoTxt = s.hasFranco ? `cumplido (libre el ${DAYS[s.francoIdx]})` : "todavía pendiente esta semana";
+      const hist = (state.statusHistory[e.id]||[]).map(h=>`${h.estado} ${fmtTime(h.created_at)}`).join(" → ") || "sin marcas hoy";
+      return `<details class="acc"><summary><span>${e.name} · ${s.horas}h de ${s.r.maxHoras||'—'}h · base ${localName(primaryLocalId(e.id))}</span><svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></summary>
+      <div class="acc-body">Trabajó ${s.horas}h esta semana. Descanso semanal: ${descansoTxt}.${s.violations.length?'<br/>⚠️ '+s.violations.join(' · '):'<br/>Sin incumplimientos.'}<div class="history-line">🕐 Hoy: ${hist}</div></div></details>`;
+    }).join("")}
+  </div>`;
+  const pendientes = state.ausenciasPendientes.length ? `<div class="accordion-card" style="padding-bottom:16px;"><h3>Faltas y certificados pendientes</h3>
+    ${state.ausenciasPendientes.map(a=>`<div class="pending-card">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div><b>${a.empleadoNombre}</b> · ${a.fecha}<div style="font-size:12.5px; color:var(--text-light-sec); margin-top:4px;">${a.motivo||'Sin motivo detallado'}</div></div>
+        <span class="badge badge-pendiente">Pendiente</span>
+      </div>
+      ${a.certificado_b64 ? `<img class="pending-thumb" src="${a.certificado_b64}" />` : ""}
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn btn-primary" style="padding:9px 16px; font-size:12.5px;" onclick="reviewAusencia('${a.id}','aprobado')">Aprobar</button>
+        <button class="btn btn-ghost" style="padding:9px 16px; font-size:12.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" onclick="reviewAusencia('${a.id}','rechazado')">Rechazar</button>
+      </div>
+    </div>`).join("")}
+  </div>` : "";
+  return `${renderLocalTabs()}${renderNewLocalForm()}${statGrid}${alertBlock}<div class="dash-grid">${grid}${estado}</div>${empDetail}${pendientes}
+    <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
+}
+function renderCellSelect(empId, dayIdx){
+  const entry = (state.turnos[empId]||[])[dayIdx];
+  const val = cellValue(entry);
+  const cls = cellDisplayClass(entry);
+  const opts = [`<option value="" ${val===''?'selected':''}>—</option>`,
+    `<option value="franco" ${val==='franco'?'selected':''}>Libre</option>`,
+    ...state.locales.flatMap(l=>[
+      `<option value="manana|${l.id}" ${val==='manana|'+l.id?'selected':''}>Mañ · ${l.nombre}</option>`,
+      `<option value="tarde|${l.id}" ${val==='tarde|'+l.id?'selected':''}>Tar · ${l.nombre}</option>`,
+    ])].join("");
+  return `<select class="cell-select ${cls} mono" onchange="setCell('${empId}',${dayIdx},this.value)">${opts}</select>`;
+}
+
+/* ---- Empleado ---- */
+function renderEmployeeNotReady(){
+  return `<div class="wizard-wrap"><div class="card" style="text-align:center;"><h2 class="title display">Necesitás el link de tu encargado</h2><p class="sub">Pedile el link de este negocio a tu encargado y abrilo — desde ahí vas a poder sumarte tocando "Equipo".</p></div></div>`;
+}
+function renderEmployeeJoin(){
+  return `<div class="wizard-wrap"><div class="card"><h2 class="title display">Sumate al equipo</h2><p class="sub">Ingresá tu nombre para unirte a <b>${state.empresaName}</b>.</p>
+    <input type="text" id="joinName" placeholder="Tu nombre" style="margin-bottom:14px;" onkeydown="if(event.key==='Enter')joinTeam()"/>
+    <button class="btn btn-primary btn-block" onclick="joinTeam()">Unirme</button>
+  </div></div>`;
+}
+async function joinTeam(){
+  const input = document.getElementById("joinName");
+  const name = input.value.trim();
+  if(!name || !state.empresaId) return;
+  let found = state.employees.find(e=>e.name.toLowerCase()===name.toLowerCase());
+  if(!found){
+    const { data, error } = await sb.from("empleados").insert({ empresa_id:state.empresaId, nombre:name, rol:"Sin definir", estado:"afuera" }).select().single();
+    if(error){ state.error="No se pudo sumar."; render(); return; }
+    found = {id:data.id, name:data.nombre, role:data.rol};
+    state.employees.push(found);
+    state.turnos[found.id]=Array(7).fill(null);
+    state.clockStatus[found.id]="afuera";
+    state.statusHistory[found.id]=[];
+  }
+  state.employeeSession = found.id;
+  render();
+  loadMisAusencias(found.id);
+}
+function renderEmployeeDashboard(){
+  const me = state.employees.find(e=>e.id===state.employeeSession);
+  if(!me){ state.employeeSession=null; return renderEmployeeJoin(); }
+  const s = statsFor(me.id);
+  const todayEntry = (state.turnos[me.id]||[])[todayIndex()];
+  const isLibreToday = todayEntry && todayEntry.tipo==="franco";
+  const todayLocal = todayEntry && todayEntry.localId ? localName(todayEntry.localId) : null;
+  const st = state.clockStatus[me.id]||"afuera";
+  const strip = DAYS.map((d,i)=>{
+    const v = (state.turnos[me.id]||[])[i];
+    const isToday = i===todayIndex();
+    const lbl = !v ? "—" : v.tipo==="franco" ? "Libre" : (v.tipo==="manana"?"Mañ":"Tarde")+" "+(localName(v.localId)||"").slice(0,6);
+    return `<div class="strip-pill mono ${cellDisplayClass(v)}" style="${isToday?'box-shadow:0 0 0 2px var(--ink);':''}"><span class="strip-day">${d}${isToday?' •':''}</span>${lbl}</div>`;
+  }).join("");
+  const statusBlock = isLibreToday
+    ? `<div class="libre-banner">🎉 Hoy es tu día libre. ¡Disfrutalo!</div>`
+    : `<div><div class="field-label" style="margin-bottom:8px;">¿Cómo estás ahora?${todayLocal?' — hoy en '+todayLocal:''}</div><div class="status-toggle">
+        <button class="status-btn ${st==='local'?'active':''}" onclick="setStatus('${me.id}','local')">En el local</button>
+        <button class="status-btn ${st==='descanso'?'active':''}" onclick="setStatus('${me.id}','descanso')">En mi descanso</button>
+        <button class="status-btn ${st==='afuera'?'active':''}" onclick="setStatus('${me.id}','afuera')">Afuera</button>
+      </div></div>`;
+  const faltaSection = state.reportandoFalta ? `<div class="new-local-form">
+      <div class="field-label">Fecha</div>
+      <input id="inp-fecha" type="date" value="${state.nuevaAusencia.fecha}" oninput="updateNuevaAusencia({fecha:this.value})" style="margin-bottom:12px;" />
+      <div class="field-label">Motivo</div>
+      <textarea id="inp-motivo" placeholder="Ej: consulta médica" oninput="updateNuevaAusencia({motivo:this.value})" style="min-height:70px; margin-bottom:12px;">${state.nuevaAusencia.motivo}</textarea>
+      <div class="field-label">Certificado (opcional)</div>
+      <input type="file" accept="image/*" onchange="handleCertificadoFile(this)" style="margin-bottom:12px;" />
+      ${state.nuevaAusencia.certificado_b64 ? `<img class="pending-thumb" src="${state.nuevaAusencia.certificado_b64}"/>` : ""}
+      <div style="display:flex; gap:10px; margin-top:8px;"><button class="btn btn-ghost" onclick="cancelReportarFalta()">Cancelar</button><button class="btn btn-primary" onclick="submitAusencia()">Enviar</button></div>
+    </div>`
+    : `<button class="btn btn-ghost" style="border:1.5px dashed var(--mint-dim); border-radius:12px; margin-top:14px; width:100%; padding:14px;" onclick="startReportarFalta()">+ Reportar una falta</button>`;
+  const misAusenciasHtml = (state.misAusencias||[]).length ? `<div style="margin-top:16px;">
+    <div class="field-label" style="margin-bottom:8px;">Tus faltas reportadas</div>
+    ${state.misAusencias.map(a=>`<div class="pending-card" style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:12.5px;">${a.fecha} · ${a.motivo||'Sin motivo'}</span><span class="badge badge-${a.estado_revision}">${a.estado_revision}</span></div>`).join("")}
+  </div>` : "";
+  return `<div class="wizard-wrap"><div class="card">
+    <div class="greet display">Hola, ${me.name} 👋</div><p class="sub" style="margin-top:2px;">${state.empresaName}</p>
+    <div class="stat-grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px;">
+      <div class="stat-card" style="box-shadow:none;border:1.5px solid var(--mint-dim);"><div class="stat-label">⏱ Esta semana</div><div class="stat-value display">${s.horas}h ${s.r.maxHoras?'/ '+s.r.maxHoras+'h':''}</div><div class="stat-sub">Horas trabajadas</div></div>
+      <div class="stat-card" style="box-shadow:none;border:1.5px solid var(--mint-dim);"><div class="stat-label">🌿 Tu descanso</div><div class="stat-value display ${s.hasFranco?'tone-lime':'tone-coral'}">${s.hasFranco? DAYS[s.francoIdx] : 'Pendiente'}</div><div class="stat-sub">${s.hasFranco?'Día libre asignado':'Todavía no tenés franco esta semana'}</div></div>
+    </div>
+    <div class="week-strip">${strip}</div>
+    <div style="margin-top:18px;">${statusBlock}</div>
+    ${faltaSection}
+    ${misAusenciasHtml}
+    <button class="link-quiet" onclick="state.employeeSession=null; render();" style="border:none;background:none;cursor:pointer;">No soy ${me.name} — cambiar de persona</button>
+  </div></div>`;
+}
+
+loadState();
+</script>
+</body>
+</html>
