@@ -151,6 +151,7 @@
   .cell-btn{ width:100%; border-radius:10px; border:1.5px solid var(--mint-dim); font-size:10.5px; font-weight:700; padding:10px 4px; text-align:center; transition:transform .1s ease; }
   .cell-btn:hover{ transform:scale(1.04); }
   .cell-manana{ background:rgba(188,237,7,0.22); border-color:var(--lime-dim); color:var(--ink); }
+  .cell-dimmed{ opacity:0.32; }
   .cell-asignado{ background:rgba(188,237,7,0.22); border-color:var(--lime-dim); color:var(--ink); }
   .cell-tarde{ background:var(--ink); border-color:var(--ink); color:var(--mint); }
   .cell-franco{ background:transparent; border-style:dashed; border-color:var(--forest); color:var(--forest); }
@@ -304,6 +305,7 @@ function freshState(){
     cierres:[], cerrandoSemana:false,
     avisos:[], nuevoAviso:null,
     authUser:null, authMode:"signup", authEmail:"", authPassword:"", authError:null, authLoading:false,
+    refrescando:false,
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
@@ -377,6 +379,9 @@ async function submitAuth(){
       if(error) throw error;
       state.authUser = data.user;
     }
+    if(state.authUser && state.role==="employee" && state.empresaId){
+      await buscarMiEmpleado();
+    }
   } catch(err){
     state.authError = err.message || "No se pudo autenticar.";
   } finally {
@@ -386,6 +391,47 @@ async function submitAuth(){
 async function cerrarSesion(){
   await sb.auth.signOut();
   state.authUser = null;
+  state.employeeSession = null;
+  render();
+}
+async function buscarMiEmpleado(){
+  const { data } = await sb.from("empleados").select("*").eq("empresa_id", state.empresaId).eq("user_id", state.authUser.id).maybeSingle();
+  if(data){
+    state.employeeSession = data.id;
+    if(!state.employees.find(e=>e.id===data.id)){
+      state.employees.push({id:data.id, name:data.nombre, role:data.rol||"Sin definir"});
+    }
+    state.turnos[data.id] = state.turnos[data.id] || Array(7).fill(null);
+    state.clockStatus[data.id] = data.estado || "afuera";
+    state.statusHistory[data.id] = state.statusHistory[data.id] || [];
+    await loadMisAusencias(data.id);
+  }
+}
+async function vincularEmpleado(){
+  const input = document.getElementById("joinName");
+  const name = (input?input.value:"").trim();
+  if(!name) return;
+  state.error=null;
+  try{
+    let found = state.employees.find(e=>e.name.toLowerCase()===name.toLowerCase());
+    if(found){
+      const { error } = await sb.from("empleados").update({ user_id: state.authUser.id }).eq("id", found.id);
+      if(error) throw error;
+      state.employeeSession = found.id;
+    } else {
+      const { data, error } = await sb.from("empleados").insert({ empresa_id:state.empresaId, nombre:name, rol:"Sin definir", estado:"afuera", user_id: state.authUser.id }).select().single();
+      if(error) throw error;
+      found = {id:data.id, name:data.nombre, role:data.rol};
+      state.employees.push(found);
+      state.turnos[found.id]=Array(7).fill(null);
+      state.clockStatus[found.id]="afuera";
+      state.statusHistory[found.id]=[];
+      state.employeeSession = found.id;
+    }
+    await loadMisAusencias(state.employeeSession);
+  } catch(err){
+    state.error = "No se pudo vincular tu perfil: "+(err.message||"");
+  }
   render();
 }
 
@@ -603,7 +649,10 @@ function renderCellSelect(empId, dayIdx){
   const src = state.horarioDraft || state.turnos;
   const entry = (src[empId]||[])[dayIdx];
   const val = entry ? (entry.tipo==="franco" ? "franco" : entry.tipo+"|"+entry.localId) : "";
-  const cls = cellDisplayClass(entry);
+  let cls = cellDisplayClass(entry);
+  const filtroActivo = state.activeLocalId && state.activeLocalId!=="todas";
+  const perteneceAlFiltro = !entry || entry.tipo==="franco" || entry.localId===state.activeLocalId;
+  if(filtroActivo && !perteneceAlFiltro) cls += " cell-dimmed";
   const opts = [`<option value="" ${val===''?'selected':''}>—</option>`,
     `<option value="franco" ${val==='franco'?'selected':''}>Libre</option>`,
     ...state.locales.flatMap(l=>(l.config.turnos||[]).map(t=>{
@@ -873,9 +922,14 @@ function huecoPorAusencia(a){
   const turno = (state.turnos[a.empleado_id]||[])[dayIdx];
   if(turno && turno.tipo!=="franco"){
     const t = findTurno(turno.localId, turno.tipo);
-    return { dayIdx, turnoNombre: t?t.nombre:"un turno", localNombre: localName(turno.localId) };
+    return { dayIdx, turnoId: turno.tipo, localId: turno.localId, turnoNombre: t?t.nombre:"un turno", localNombre: localName(turno.localId) };
   }
   return null;
+}
+async function cubrirHueco(ausenteId, dayIdx, turnoId, localId, reemplazoId){
+  if(!reemplazoId){ state.error="Elegí quién cubre antes de asignar."; render(); return; }
+  await setCell(reemplazoId, dayIdx, turnoId+"|"+localId);
+  await setCell(ausenteId, dayIdx, "");
 }
 
 /* ---- Ausencias / certificados ---- */
@@ -1020,10 +1074,23 @@ function misAvisos(empId){
 }
 
 function feriadosEstaSemana(){
-  return FERIADOS_2026.map(f=>{
-    for(let d=0; d<7; d++){ if(fechaParaDia(d)===f.fecha) return {...f, dayIdx:d}; }
-    return null;
-  }).filter(Boolean);
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const out = [];
+  for(let i=0;i<14;i++){
+    const d = new Date(hoy); d.setDate(hoy.getDate()+i);
+    const iso = d.toISOString().slice(0,10);
+    const fer = FERIADOS_2026.find(f=>f.fecha===iso);
+    if(fer) out.push({...fer, dayIdx:(d.getDay()+6)%7, diasFaltan:i});
+  }
+  return out;
+}
+async function avisarFeriado(fecha, nombre){
+  try{
+    await sb.from("avisos").insert({ empresa_id: state.empresaId, empleado_id: null, titulo:"Feriado", mensaje: `${nombre} (${fecha}): confirmá con tu encargado si se trabaja ese día.` });
+    await fetchAvisos();
+    state.error=null;
+  } catch(e){ state.error="No se pudo avisar."; }
+  render();
 }
 async function marcarNoLaborable(fecha, dayIdx){
   state.saving=true; render();
@@ -1057,7 +1124,10 @@ function renderNavRight(){
     html += `<button id="copyLinkBtn" class="pill pill-lime pill-btn" onclick="copyLink()">🔗 Copiar link del equipo</button>
       <button class="pill pill-ghost pill-btn" onclick="update({view:'wizard', step:0})">Reconfigurar</button>`;
   }
-  if(state.role==="admin" && state.authUser){
+  if(state.empresaId){
+    html += `<button class="pill pill-ghost pill-btn" onclick="refrescarAhora()">${state.refrescando?'🔄 Actualizando…':'🔄 Actualizar'}</button>`;
+  }
+  if(state.authUser){
     html += `<button class="pill pill-ghost pill-btn" title="${state.authUser.email}" onclick="cerrarSesion()">🔓 Cerrar sesión</button>`;
   }
   html += `<button class="pill pill-ghost pill-btn" title="Deja de ver este negocio en este navegador — no borra nada" onclick="resetAll()">Salir</button>`;
@@ -1078,7 +1148,8 @@ function render(){
   if(state.error){ html += `<div class="wizard-wrap"><div class="alert-card" style="border-left-color:var(--coral);"><div class="alert-line">⚠️ ${state.error}</div></div></div>`; }
   if(state.role==="employee"){
     if(!state.empresaId){ html += renderEmployeeNotReady(); }
-    else if(!state.employeeSession){ html += renderEmployeeJoin(); }
+    else if(!state.authUser){ html += renderEmployeeAuth(); }
+    else if(!state.employeeSession){ html += renderEmployeeLinkOrJoin(); }
     else { html += renderEmployeeDashboard(); }
   } else {
     if(!state.authUser){
@@ -1225,8 +1296,10 @@ function renderAvisos(){
 }
 
 function renderLocalTabs(){
+  const esTodas = !state.activeLocalId || state.activeLocalId==="todas";
+  const tabTodas = `<button class="local-tab ${esTodas?'active':''}" onclick="selectLocalTab('todas')">Todas las sucursales</button>`;
   const tabs = state.locales.map(l=>`<button class="local-tab ${state.activeLocalId===l.id?'active':''}" onclick="selectLocalTab('${l.id}')">${l.nombre}</button>`).join("");
-  return `<div class="local-tabs">${tabs}<button class="local-tab add" onclick="startAddLocal()">+ Agregar sucursal</button></div>`;
+  return `<div class="local-tabs">${tabTodas}${tabs}<button class="local-tab add" onclick="startAddLocal()">+ Agregar sucursal</button></div>`;
 }
 function renderCalendarControls(){
   if(state.horarioDraft){
@@ -1432,8 +1505,9 @@ function renderReportesPage(){
 }
 
 function renderDashboard(){
-  const activeLocal = state.locales.find(l=>l.id===state.activeLocalId) || state.locales[0];
-  const r = rulesForConfig(activeLocal ? activeLocal.config : null);
+  const esTodas = !state.activeLocalId || state.activeLocalId==="todas";
+  const activeLocal = esTodas ? null : state.locales.find(l=>l.id===state.activeLocalId);
+  const r = activeLocal ? rulesForConfig(activeLocal.config) : null;
   let totalAlerts = 0;
   const alertLines = [];
   state.employees.forEach(e=>{
@@ -1447,7 +1521,7 @@ function renderDashboard(){
   }).join("");
   const calendario = `<div class="card" style="box-shadow:0 30px 70px -20px rgba(0,0,0,0.65);">
     <h2 class="display" style="margin:0 0 3px; font-size:21px;">📅 Horario de la semana</h2>
-    <p class="sub" style="margin-bottom:6px;">Quién trabaja, cuándo, y en qué sucursal — ${activeLocal?activeLocal.nombre:'sin sucursal'} y el resto del equipo.</p>
+    <p class="sub" style="margin-bottom:6px;">Quién trabaja, cuándo, y en qué sucursal — ${esTodas?'viendo todas juntas':activeLocal.nombre}.</p>
     ${state.avisoCalendario ? `<div class="alert-card" style="border-left-color:var(--coral); margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
         <div>⚠️ <b>${state.avisoCalendario.nombre}</b>: ${state.avisoCalendario.mensajes.join(' · ')}.</div>
@@ -1464,19 +1538,36 @@ function renderDashboard(){
     <div><b style="font-size:14px;">📊 Reportes</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">Horas extra, faltas del mes, feriados y el detalle minuto a minuto de cada uno.</div></div>
     <button class="btn btn-primary" style="padding:9px 18px; font-size:12.5px;" onclick="irAReportes()">Ver reportes →</button>
   </div>`;
+  const hoyISO = new Date().toISOString().slice(0,10);
   const huecosLines = state.ausenciasPendientes.map(a=>{
     const hueco = huecoPorAusencia(a);
     if(!hueco) return "";
-    return `<div class="alert-line">🔄 <b>${a.empleadoNombre}</b> reportó falta el ${a.fecha} y tenía <b>${hueco.turnoNombre}</b> asignado en ${hueco.localNombre} — reprogramá ese turno.</div>`;
+    const esHoy = a.fecha===hoyISO;
+    const opciones = state.employees.filter(e=>e.id!==a.empleado_id).map(e=>`<option value="${e.id}">${e.name}</option>`).join("");
+    return `<div class="alert-line" style="${esHoy?'font-weight:700;':''}">
+      🔄 <b>${a.empleadoNombre}</b> reportó falta el ${a.fecha}${esHoy?' — <span style="color:var(--coral-dim);">¡ES HOY!</span>':''} y tenía <b>${hueco.turnoNombre}</b> asignado en ${hueco.localNombre}.
+      <div style="margin-top:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <select id="cubrir-${a.id}" style="flex:1; min-width:140px; padding:8px 10px; border-radius:8px; border:1.5px solid var(--mint-dim); font-size:12.5px; background:#fff; color:var(--ink);">
+          <option value="">¿Quién cubre?</option>
+          ${opciones}
+        </select>
+        <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="cubrirHueco('${a.empleado_id}',${hueco.dayIdx},'${hueco.turnoId}','${hueco.localId}', document.getElementById('cubrir-${a.id}').value)">Asignar</button>
+      </div>
+    </div>`;
   }).filter(Boolean);
-  const huecosBlock = huecosLines.length ? `<div class="alert-card" style="margin-top:18px; border-left-color:var(--forest);"><b style="display:block;margin-bottom:6px;">🔄 Turnos a reprogramar</b>${huecosLines.join("")}</div>` : "";
+  const huecosBlock = huecosLines.length ? `<div class="alert-card" style="margin-top:18px; border-left-color:var(--forest);"><b style="display:block;margin-bottom:8px;">🔄 Turnos a reprogramar</b>${huecosLines.join("")}</div>` : "";
   const feriadosSemana = feriadosEstaSemana();
   const feriadosCard = feriadosSemana.length ? `<div class="card" style="margin-top:18px;">
-    <h3 style="margin:0 0 10px; font-size:14px;">🎉 Feriados esta semana — ¿se trabaja?</h3>
-    ${feriadosSemana.map(f=>`<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 0; border-top:1px dashed var(--mint-dim);">
-      <span style="font-size:13px;"><b>${f.nombre}</b> — ${DAYS[f.dayIdx]} ${f.fecha.slice(8,10)}/${f.fecha.slice(5,7)} ${f.laborable?'(laborable)':'(no laborable — doble si se trabaja)'}</span>
-      <button class="btn btn-ghost" style="padding:8px 14px; font-size:12px; border:1.5px solid var(--mint-dim); border-radius:999px;" ${state.saving?'disabled':''} onclick="marcarNoLaborable('${f.fecha}',${f.dayIdx})">No se trabaja — vaciar turnos y avisar</button>
+    <h3 style="margin:0 0 4px; font-size:14px;">🎉 Próximos feriados (2 semanas) — ¿se trabaja?</h3>
+    <p class="sub" style="margin-bottom:6px;">Avisale al equipo con anticipación, o vaciá el calendario si el local no abre ese día.</p>
+    ${feriadosSemana.map(f=>`<div style="padding:10px 0; border-top:1px dashed var(--mint-dim);">
+      <div style="font-size:13px; margin-bottom:8px;"><b>${f.nombre}</b> — ${DAYS[f.dayIdx]} ${f.fecha.slice(8,10)}/${f.fecha.slice(5,7)} · <span class="mono" style="color:var(--forest); font-weight:700;">${f.diasFaltan===0?'hoy':'en '+f.diasFaltan+' día'+(f.diasFaltan===1?'':'s')}</span> · ${f.laborable?'laborable':'no laborable — doble si se trabaja'}</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-ghost" style="padding:7px 12px; font-size:11.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" onclick="avisarFeriado('${f.fecha}','${f.nombre}')">📣 Avisar al equipo</button>
+        <button class="btn btn-ghost" style="padding:7px 12px; font-size:11.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" ${state.saving?'disabled':''} onclick="marcarNoLaborable('${f.fecha}',${f.dayIdx})">🔄 No se trabaja — vaciar ese día</button>
+      </div>
     </div>`).join("")}
+    <p style="font-size:11px; color:var(--text-light-sec); margin:10px 0 0;">"Vaciar" borra ese día de la semana en el calendario recurrente — si es solo por esta vez, volvé a asignarlo la semana siguiente.</p>
   </div>` : "";
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
   const estado = `<div class="side-card" style="margin-top:18px;"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
@@ -1509,19 +1600,38 @@ function renderDashboard(){
     </div>
   </div>` : "";
   const statMini = `<div class="stat-grid" style="margin-top:18px;">
-    <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${activeLocal?activeLocal.nombre:'—'}</div><div style="font-size:13px; color:var(--text-light-sec);">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
+    <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${esTodas?'Todas las sucursales':activeLocal.nombre}</div><div style="font-size:13px; color:var(--text-light-sec);">${esTodas?state.locales.length+' sucursales en total':`${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h`}</div></div>
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">👥 Equipo</div><div style="font-size:13px; color:var(--text-light-sec);">${state.employees.length} personas · ${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
   </div>`;
   return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${huecosBlock}${feriadosCard}${reportesTeaser}${alertBlock}
     ${estado}${pendientes}
     ${renderAvisos()}
     ${statMini}
-    <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
+    <div class="footer-note">Conectado a tu base de datos · v2026-08-18-23:03 · Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
 }
 
 /* ---- Empleado ---- */
 function renderEmployeeNotReady(){
   return `<div class="wizard-wrap"><div class="card" style="text-align:center;"><h2 class="title display">Necesitás el link de tu encargado</h2><p class="sub">Pedile el link de este negocio a tu encargado y abrilo — desde ahí vas a poder sumarte tocando "Equipo".</p></div></div>`;
+}
+function renderEmployeeAuth(){
+  return `<div class="wizard-wrap"><div class="card">
+    <h2 class="title display">${state.authMode==='signup'?'Creá tu cuenta':'Iniciá sesión'}</h2>
+    <p class="sub">Para fichar y ver tus turnos en <b>${state.empresaName}</b> necesitás una cuenta.</p>
+    ${state.authError?`<div class="alert-card" style="border-left-color:var(--coral); margin-bottom:14px;"><div class="alert-line">⚠️ ${state.authError}</div></div>`:""}
+    <div class="field-label">Email</div>
+    <input id="inp-auth-email" type="text" value="${state.authEmail||''}" oninput="update({authEmail:this.value})" placeholder="tu@email.com" style="margin-bottom:14px;" />
+    <div class="field-label">Contraseña</div>
+    <input id="inp-auth-password" type="password" value="${state.authPassword||''}" oninput="update({authPassword:this.value})" placeholder="Mínimo 6 caracteres" style="margin-bottom:18px;" onkeydown="if(event.key==='Enter')submitAuth()" />
+    <button class="btn btn-primary btn-block" ${state.authLoading?'disabled':''} onclick="submitAuth()">${state.authLoading?'Un momento…':(state.authMode==='signup'?'Crear cuenta':'Ingresar')}</button>
+    <button class="link-quiet" style="border:none;background:none;cursor:pointer;display:block;margin:14px auto 0;" onclick="startAuthMode('${state.authMode==='signup'?'login':'signup'}')">${state.authMode==='signup'?'¿Ya tenés cuenta? Iniciá sesión':'¿Todavía no tenés cuenta? Creala'}</button>
+  </div></div>`;
+}
+function renderEmployeeLinkOrJoin(){
+  return `<div class="wizard-wrap"><div class="card"><h2 class="title display">Completá tu perfil</h2><p class="sub">¿Cómo te llamás? Así te asignamos a <b>${state.empresaName}</b> — si tu encargado ya te había cargado, te vinculamos con esa ficha.</p>
+    <input type="text" id="joinName" placeholder="Tu nombre" style="margin-bottom:14px;" onkeydown="if(event.key==='Enter')vincularEmpleado()"/>
+    <button class="btn btn-primary btn-block" onclick="vincularEmpleado()">Continuar</button>
+  </div></div>`;
 }
 function renderEmployeeJoin(){
   return `<div class="wizard-wrap"><div class="card"><h2 class="title display">Sumate al equipo</h2><p class="sub">Ingresá tu nombre para unirte a <b>${state.empresaName}</b>.</p>
@@ -1638,7 +1748,7 @@ function renderEmployeeDashboard(){
     <div style="margin-top:18px;">${statusBlock}</div>
     ${faltaSection}
     ${misAusenciasHtml}
-    <button class="link-quiet" onclick="state.employeeSession=null; render();" style="border:none;background:none;cursor:pointer;">No soy ${me.name} — cambiar de persona</button>
+    <button class="link-quiet" onclick="cerrarSesion()" style="border:none;background:none;cursor:pointer;">Cerrar sesión — no soy ${me.name}</button>
   </div></div>`;
 }
 
@@ -1654,6 +1764,16 @@ async function heartbeat(){
     await fetchAvisos();
     render();
   } catch(e){ /* silencioso — no interrumpir con errores de fondo */ }
+}
+async function refrescarAhora(){
+  if(!state.empresaId) return;
+  state.refrescando = true; render();
+  try{
+    await fetchEmpresaData(state.empresaId);
+    if(state.role==="employee" && state.employeeSession) await loadMisAusencias(state.employeeSession);
+    await fetchAvisos();
+  } catch(e){ state.error = "No se pudo actualizar."; }
+  finally { state.refrescando=false; render(); }
 }
 setInterval(heartbeat, 25000);
 
