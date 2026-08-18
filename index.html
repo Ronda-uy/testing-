@@ -279,6 +279,7 @@ function freshState(){
     employees:[], turnos:{}, clockStatus:{}, statusHistory:{},
     ausenciasPendientes:[], misAusencias:[], ausenciasMes:[],
     cierres:[], cerrandoSemana:false,
+    avisos:[], nuevoAviso:null,
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
@@ -323,6 +324,12 @@ async function fetchEmpresaData(empresaId){
   turnosRows.forEach(t=>{ if(state.turnos[t.empleado_id]) state.turnos[t.empleado_id][t.dia] = {tipo:t.tipo, localId:t.local_id}; });
   logRows.forEach(l=>{ if(state.statusHistory[l.empleado_id]) state.statusHistory[l.empleado_id].push({estado:l.estado, created_at:l.created_at}); });
   state.ausenciasPendientes = (pendRows||[]).map(p=>{ const emp = (emps||[]).find(e=>e.id===p.empleado_id); return {...p, empleadoNombre: emp?emp.nombre:"—"}; });
+  await fetchAvisos();
+}
+async function fetchAvisos(){
+  if(!state.empresaId) return;
+  const { data } = await sb.from("avisos").select("*").eq("empresa_id", state.empresaId).order("created_at",{ascending:false});
+  state.avisos = data||[];
 }
 
 async function loadState(){
@@ -927,6 +934,53 @@ async function irAReportes(){
 }
 function volverAlPanel(){ state.view="dashboard"; render(); }
 
+function startNuevoAviso(){ state.nuevoAviso = { destinatario:"general", titulo:"", mensaje:"" }; render(); }
+function cancelarNuevoAviso(){ state.nuevoAviso = null; render(); }
+function updateNuevoAviso(patch){ Object.assign(state.nuevoAviso, patch); render(); }
+async function publicarAviso(){
+  const a = state.nuevoAviso;
+  if(!a.mensaje || !a.mensaje.trim()){ state.error="Escribí un mensaje antes de publicar."; render(); return; }
+  const empleadoId = a.destinatario==="general" ? null : a.destinatario;
+  const { error } = await sb.from("avisos").insert({ empresa_id: state.empresaId, empleado_id: empleadoId, titulo: a.titulo||null, mensaje: a.mensaje.trim() });
+  if(error){ state.error="No se pudo publicar el aviso."; render(); return; }
+  state.nuevoAviso = null; state.error=null;
+  await fetchAvisos();
+  render();
+}
+async function borrarAviso(id){
+  await sb.from("avisos").delete().eq("id", id);
+  state.avisos = state.avisos.filter(a=>a.id!==id);
+  render();
+}
+function misAvisos(empId){
+  return state.avisos.filter(a=> !a.empleado_id || a.empleado_id===empId);
+}
+
+function feriadosEstaSemana(){
+  return FERIADOS_2026.map(f=>{
+    for(let d=0; d<7; d++){ if(fechaParaDia(d)===f.fecha) return {...f, dayIdx:d}; }
+    return null;
+  }).filter(Boolean);
+}
+async function marcarNoLaborable(fecha, dayIdx){
+  state.saving=true; render();
+  try{
+    for(const e of state.employees){
+      const entry = (state.turnos[e.id]||[])[dayIdx];
+      if(entry && entry.tipo!=="franco"){
+        const { error } = await sb.from("turnos").delete().eq("empleado_id", e.id).eq("dia", dayIdx);
+        if(error) throw new Error(error.message);
+        state.turnos[e.id][dayIdx] = null;
+      }
+    }
+    const fer = FERIADOS_2026.find(f=>f.fecha===fecha);
+    await sb.from("avisos").insert({ empresa_id: state.empresaId, empleado_id: null, titulo: "Feriado", mensaje: `${fer?fer.nombre:'Feriado'} (${fecha}): no se trabaja este día — turnos vaciados.` });
+    await fetchAvisos();
+    state.error = null;
+  } catch(e){ state.error = "No se pudo actualizar: "+e.message; }
+  finally { state.saving=false; render(); }
+}
+
 /* ---- Nav ---- */
 function renderNavRight(){
   const el = document.getElementById("navRight");
@@ -1036,6 +1090,39 @@ function renderWizard(){
 }
 
 /* ---- Dashboard ---- */
+function renderNuevoAvisoForm(){
+  const a = state.nuevoAviso;
+  return `<div class="new-local-form">
+    <div class="field-label">Para</div>
+    <select id="inp-aviso-dest" onchange="updateNuevoAviso({destinatario:this.value})" style="width:100%; padding:12px 14px; border-radius:12px; border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); margin-bottom:10px;">
+      <option value="general" ${a.destinatario==='general'?'selected':''}>Todo el equipo</option>
+      ${state.employees.map(e=>`<option value="${e.id}" ${a.destinatario===e.id?'selected':''}>${e.name} (privado)</option>`).join("")}
+    </select>
+    <input id="inp-aviso-titulo" type="text" value="${a.titulo}" oninput="updateNuevoAviso({titulo:this.value})" placeholder="Título (opcional)" style="margin-bottom:10px;" />
+    <textarea id="inp-aviso-mensaje" oninput="updateNuevoAviso({mensaje:this.value})" placeholder="Escribí el aviso..." style="min-height:70px; margin-bottom:10px;">${a.mensaje}</textarea>
+    <div style="display:flex; gap:8px;"><button class="btn btn-ghost" onclick="cancelarNuevoAviso()">Cancelar</button><button class="btn btn-primary" onclick="publicarAviso()">Publicar</button></div>
+  </div>`;
+}
+function renderAvisos(){
+  const list = state.avisos.map(a=>{
+    const dest = a.empleado_id ? ((state.employees.find(e=>e.id===a.empleado_id)||{}).name || "—") : "Todo el equipo";
+    return `<div class="pending-card" style="margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>${a.titulo?`<b>${a.titulo}</b><br/>`:""}<span style="font-size:13px;">${a.mensaje}</span><div style="font-size:11px; color:var(--text-light-sec); margin-top:4px;">Para: ${dest} · ${fmtTime(a.created_at)}</div></div>
+        <button onclick="borrarAviso('${a.id}')" style="color:var(--coral); font-weight:800; flex-shrink:0;">✕</button>
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="accordion-card" style="margin-top:18px; padding-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 0 4px;">
+      <h3 style="margin:0;">📣 Avisos</h3>
+      <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="startNuevoAviso()">+ Nuevo</button>
+    </div>
+    ${state.nuevoAviso ? renderNuevoAvisoForm() : ""}
+    ${state.avisos.length ? list : `<p class="sub" style="margin:0;">Todavía no hay avisos.</p>`}
+  </div>`;
+}
+
 function renderLocalTabs(){
   const tabs = state.locales.map(l=>`<button class="local-tab ${state.activeLocalId===l.id?'active':''}" onclick="selectLocalTab('${l.id}')">${l.nombre}</button>`).join("");
   return `<div class="local-tabs">${tabs}<button class="local-tab add" onclick="startAddLocal()">+ Agregar sucursal</button></div>`;
@@ -1124,30 +1211,36 @@ function renderReportes(){
     const feriadoBadges = s.feriadosTrabajados.map(f=>`<span class="badge ${f.laborable?'badge-pendiente':'badge-rechazado'}" title="${f.laborable?'Laborable — se paga normal salvo convenio distinto':'No laborable — corresponde el doble si trabajó'}">🎉 ${f.nombre}</span>`).join(" ");
     const porDia = historialPorDia(e.id);
     const dias = Object.keys(porDia).sort();
-    const detalleHtml = dias.length ? dias.map(k=>{
+    const detalleHoras = dias.length ? dias.map(k=>{
       const d = new Date(k+"T00:00:00");
       const nombreDia = DAYS[(d.getDay()+6)%7];
       const linea = porDia[k].map(ev=>`${ev.label} <b>${fmtTime(ev.hora)}</b>`).join(" → ");
       return `<div class="history-line">📅 ${nombreDia} ${k.slice(8,10)}/${k.slice(5,7)} — ${linea}</div>`;
     }).join("") : `<div class="history-line">Todavía no hay marcas de esta semana.</div>`;
+    const faltasEmp = (state.ausenciasMes||[]).filter(a=>a.empleado_id===e.id);
+    const detalleFaltas = faltasEmp.length ? faltasEmp.map(a=>`<div class="history-line">🩺 ${a.fecha} — ${a.motivo||'Sin motivo'} <span class="badge badge-${a.estado_revision}" style="margin-left:4px;">${a.estado_revision}</span></div>`).join("") : "";
     return `<details class="acc">
       <summary>
-        <span style="flex:1; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+        <span style="flex:1; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <b>${e.name}</b>
           <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Plan ${planificado}h</span>
           <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Fichado ${workedH}h</span>
-          <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Descanso ${restH}h</span>
           ${irregular ? `<span class="badge badge-pendiente">${diff>0?'+':''}${diff}h</span>` : `<span class="badge badge-aprobado">OK</span>`}
+          ${faltasEmp.length ? `<span class="badge badge-rechazado">${faltasEmp.length} falta${faltasEmp.length>1?'s':''}</span>`:""}
           ${feriadoBadges}
         </span>
         <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
       </summary>
-      <div class="acc-body">${detalleHtml}</div>
+      <div class="acc-body">
+        <div style="font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-light-sec); margin-bottom:4px;">Horario de esta semana</div>
+        ${detalleHoras}
+        ${faltasEmp.length ? `<div style="font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-light-sec); margin:12px 0 4px;">Faltas este mes</div>${detalleFaltas}` : ""}
+      </div>
     </details>`;
   }).join("");
   return `<div class="accordion-card" style="margin-top:18px; padding-bottom:6px;">
-    <h3 style="margin:0; padding:14px 0 4px;">⏱ Reportes — esta semana</h3>
-    <p class="sub" style="margin:0 0 4px;">Planificado vs. fichado real. Tocá un empleado para ver el detalle minuto a minuto: entrada, descanso, salida.</p>
+    <h3 style="margin:0; padding:14px 0 4px;">👤 Por empleado</h3>
+    <p class="sub" style="margin:0 0 4px;">Tocá a cada uno para ver su horario minuto a minuto y sus faltas del mes, todo en un solo lugar.</p>
     ${rows}
   </div>`;
 }
@@ -1215,15 +1308,6 @@ function renderReportesPage(){
     <div class="stat-card"><div class="stat-label">🎉 Feriados este mes</div><div class="stat-value display">${feriadosMes.length}</div><div class="stat-sub">${feriadosMes.map(f=>f.fecha.slice(8,10)+'/'+f.fecha.slice(5,7)+' · '+f.nombre).join(' · ')||'Ninguno'}</div></div>
   </div>`;
 
-  const listaMes = mes.length ? `<div class="accordion-card" style="margin-top:0;"><h3>Faltas reportadas este mes</h3>
-    ${mes.map(a=>`<div class="pending-card" style="margin-bottom:8px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
-        <span style="font-size:13px;"><b>${a.empleadoNombre}</b> · ${a.fecha} · ${a.motivo||'Sin motivo'}</span>
-        <span class="badge badge-${a.estado_revision}">${a.estado_revision}</span>
-      </div>
-    </div>`).join("")}
-  </div>` : `<div class="card" style="box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--text-light-sec); font-size:13px;">Todavía no se reportó ninguna falta este mes.</div>`;
-
   const hoyEsFinDeSemana = todayIndex()===6;
   const cerrarBtn = `<div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:0;">
     <div><b style="font-size:14px;">📦 Cerrar esta semana</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">${hoyEsFinDeSemana?'Guardá los números de esta semana como registro fijo — para liquidación o historial.':'La semana todavía no terminó — podés cerrarla igual, pero va a quedar parcial.'}</div></div>
@@ -1240,7 +1324,6 @@ function renderReportesPage(){
     </div>
     ${cerrarBtn}
     ${resumen}
-    ${listaMes}
     ${renderReportes()}
     ${renderCierres()}
     <p style="font-size:11.5px; color:var(--text-dark-sec); text-align:center; margin-top:14px;">Horas extra y descanso en vivo son de esta semana. Para ver semanas anteriores, cerralas con el botón de arriba — quedan guardadas para siempre.</p>
@@ -1286,6 +1369,14 @@ function renderDashboard(){
     return `<div class="alert-line">🔄 <b>${a.empleadoNombre}</b> reportó falta el ${a.fecha} y tenía <b>${hueco.turnoNombre}</b> asignado en ${hueco.localNombre} — reprogramá ese turno.</div>`;
   }).filter(Boolean);
   const huecosBlock = huecosLines.length ? `<div class="alert-card" style="margin-top:18px; border-left-color:var(--forest);"><b style="display:block;margin-bottom:6px;">🔄 Turnos a reprogramar</b>${huecosLines.join("")}</div>` : "";
+  const feriadosSemana = feriadosEstaSemana();
+  const feriadosCard = feriadosSemana.length ? `<div class="card" style="margin-top:18px;">
+    <h3 style="margin:0 0 10px; font-size:14px;">🎉 Feriados esta semana — ¿se trabaja?</h3>
+    ${feriadosSemana.map(f=>`<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 0; border-top:1px dashed var(--mint-dim);">
+      <span style="font-size:13px;"><b>${f.nombre}</b> — ${DAYS[f.dayIdx]} ${f.fecha.slice(8,10)}/${f.fecha.slice(5,7)} ${f.laborable?'(laborable)':'(no laborable — doble si se trabaja)'}</span>
+      <button class="btn btn-ghost" style="padding:8px 14px; font-size:12px; border:1.5px solid var(--mint-dim); border-radius:999px;" ${state.saving?'disabled':''} onclick="marcarNoLaborable('${f.fecha}',${f.dayIdx})">No se trabaja — vaciar turnos y avisar</button>
+    </div>`).join("")}
+  </div>` : "";
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
   const estado = `<div class="side-card" style="margin-top:18px;"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
     <div class="status-grid">
@@ -1320,8 +1411,9 @@ function renderDashboard(){
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${activeLocal?activeLocal.nombre:'—'}</div><div style="font-size:13px; color:var(--text-light-sec);">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">👥 Equipo</div><div style="font-size:13px; color:var(--text-light-sec);">${state.employees.length} personas · ${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
   </div>`;
-  return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${huecosBlock}${reportesTeaser}${alertBlock}
+  return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${huecosBlock}${feriadosCard}${reportesTeaser}${alertBlock}
     ${estado}${pendientes}
+    ${renderAvisos()}
     ${statMini}
     <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
 }
@@ -1427,8 +1519,16 @@ function renderEmployeeDashboard(){
       ${a.estado_revision==='rechazado' && a.motivo_rechazo ? `<div style="font-size:12px; color:var(--coral-dim); margin-top:6px;">Motivo del rechazo: ${a.motivo_rechazo}</div>` : ""}
     </div>`).join("")}
   </div>` : "";
+  const misAvisosLista = misAvisos(me.id);
+  const avisosHtml = misAvisosLista.length ? `<div style="margin-bottom:16px;">
+    ${misAvisosLista.map(a=>`<div class="pending-card" style="margin-bottom:8px; border-left:4px solid ${a.empleado_id?'var(--amber)':'var(--lime-dim)'};">
+      ${a.titulo?`<b>${a.titulo}</b><br/>`:""}<span style="font-size:13px;">${a.mensaje}</span>
+      <div style="font-size:11px; color:var(--text-light-sec); margin-top:4px;">${a.empleado_id?'Privado para vos':'Para todo el equipo'} · ${fmtTime(a.created_at)}</div>
+    </div>`).join("")}
+  </div>` : "";
   return `<div class="wizard-wrap"><div class="card">
     <div class="greet display">Hola, ${me.name} 👋</div><p class="sub" style="margin-top:2px;">${state.empresaName}</p>
+    ${avisosHtml}
     <div class="stat-grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px;">
       <div class="stat-card" style="box-shadow:none;border:1.5px solid var(--mint-dim);"><div class="stat-label">⏱ Esta semana</div><div class="stat-value display">${s.horas}h ${s.r.maxHoras?'/ '+s.r.maxHoras+'h':''}</div><div class="stat-sub">Horas trabajadas</div></div>
       <div class="stat-card" style="box-shadow:none;border:1.5px solid var(--mint-dim);"><div class="stat-label">🌿 Tu descanso</div><div class="stat-value display ${s.hasFranco?'tone-lime':'tone-coral'}">${s.hasFranco? DAYS[s.francoIdx] : 'Pendiente'}</div><div class="stat-sub">${s.hasFranco?'Día libre asignado':'Todavía no tenés franco esta semana'}</div></div>
@@ -1440,6 +1540,17 @@ function renderEmployeeDashboard(){
     <button class="link-quiet" onclick="state.employeeSession=null; render();" style="border:none;background:none;cursor:pointer;">No soy ${me.name} — cambiar de persona</button>
   </div></div>`;
 }
+
+async function heartbeat(){
+  if(!loaded || !state.empresaId) return;
+  try{
+    await fetchEmpresaData(state.empresaId);
+    if(state.role==="employee" && state.employeeSession) await loadMisAusencias(state.employeeSession);
+    await fetchAvisos();
+    render();
+  } catch(e){ /* silencioso — no interrumpir con errores de fondo */ }
+}
+setInterval(heartbeat, 20000);
 
 loadState();
 </script>
