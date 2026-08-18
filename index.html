@@ -226,6 +226,7 @@
 <main id="app"></main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <script>
 const SUPABASE_URL = "https://vzihlzoqnqowqidxvuth.supabase.co";
 const SUPABASE_KEY = "sb_publishable_u49hetpJhEM5BvBOsYcbhA_KRpC-IH4";
@@ -276,12 +277,14 @@ function freshState(){
     employeeSession:null,
     view:"wizard", step:0,
     employees:[], turnos:{}, clockStatus:{}, statusHistory:{},
-    ausenciasPendientes:[], misAusencias:[],
+    ausenciasPendientes:[], misAusencias:[], ausenciasMes:[],
+    cierres:[], cerrandoSemana:false,
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
     confirmando:null,
     rechazando:null,
+    avisoCalendario:null,
     error:null, saving:false,
   };
 }
@@ -442,13 +445,16 @@ async function activarPanel(){
 
 async function switchRole(r){
   state.role=r;
+  render();
   if(r==="admin" && state.empresaId){
     state.view="dashboard";
-    render();
     try{ await fetchEmpresaData(state.empresaId); }
     catch(e){ state.error="No se pudo actualizar el panel."; }
+    render();
+  } else if(r==="employee" && state.employeeSession){
+    try{ await loadMisAusencias(state.employeeSession); }
+    catch(e){ state.error="No se pudo actualizar."; render(); }
   }
-  render();
 }
 function resetAll(){
   const url = new URL(window.location); url.searchParams.delete("empresa"); window.history.replaceState({}, "", url);
@@ -537,20 +543,33 @@ function renderCellSelect(empId, dayIdx){
   ].join("");
   return `<select class="cell-select ${cls} mono" onchange="setCell('${empId}',${dayIdx},this.value)">${opts}</select>`;
 }
+function avisarSiCorresponde(empId, violacionesAntes){
+  const despues = statsFor(empId).violations;
+  const nuevas = despues.filter(v => !violacionesAntes.includes(v));
+  if(nuevas.length){
+    const emp = state.employees.find(e=>e.id===empId);
+    state.avisoCalendario = { nombre: emp?emp.name:"", mensajes: nuevas };
+  }
+}
+function cerrarAvisoCalendario(){ state.avisoCalendario = null; render(); }
+
 async function setCell(empId, dayIdx, value){
   let entry = null;
   if(value==="franco") entry = {tipo:"franco", localId:null};
   else if(value){ const [tipo, localId] = value.split("|"); entry = {tipo, localId}; }
+  const violacionesAntes = statsFor(empId).violations;
   if(state.horarioDraft){
     const days = (state.horarioDraft[empId]||Array(7).fill(null)).slice();
     days[dayIdx]=entry;
     state.horarioDraft[empId]=days;
+    avisarSiCorresponde(empId, violacionesAntes);
     render();
     return;
   }
   const days = (state.turnos[empId]||Array(7).fill(null)).slice();
   days[dayIdx]=entry;
   state.turnos[empId]=days;
+  avisarSiCorresponde(empId, violacionesAntes);
   render();
   if(entry){
     const { error } = await sb.from("turnos").upsert({ empleado_id:empId, dia:dayIdx, tipo:entry.tipo, local_id:entry.localId||null }, { onConflict:"empleado_id,dia" });
@@ -775,6 +794,20 @@ async function confirmarDraft(){
   }
 }
 
+function diaSemanaDeFecha(fechaISO){
+  const d = new Date(fechaISO+"T00:00:00");
+  return (d.getDay()+6)%7;
+}
+function huecoPorAusencia(a){
+  const dayIdx = diaSemanaDeFecha(a.fecha);
+  const turno = (state.turnos[a.empleado_id]||[])[dayIdx];
+  if(turno && turno.tipo!=="franco"){
+    const t = findTurno(turno.localId, turno.tipo);
+    return { dayIdx, turnoNombre: t?t.nombre:"un turno", localNombre: localName(turno.localId) };
+  }
+  return null;
+}
+
 /* ---- Ausencias / certificados ---- */
 function resizeImageToBase64(file, maxWidth, cb){
   const reader = new FileReader();
@@ -832,12 +865,77 @@ async function reviewAusencia(id, decision){
   render();
 }
 
+function mondayOfThisWeek(){
+  const now = new Date();
+  const dow = (now.getDay()+6)%7;
+  const monday = new Date(now); monday.setDate(now.getDate()-dow); monday.setHours(0,0,0,0);
+  return monday;
+}
+function sundayOfThisWeek(){
+  const m = mondayOfThisWeek();
+  const s = new Date(m); s.setDate(m.getDate()+6);
+  return s;
+}
+async function cerrarSemana(){
+  if(!state.empresaId || !state.employees.length) return;
+  state.cerrandoSemana = true; state.error=null; render();
+  const inicio = mondayOfThisWeek().toISOString().slice(0,10);
+  const fin = sundayOfThisWeek().toISOString().slice(0,10);
+  try{
+    for(const e of state.employees){
+      const s = statsFor(e.id);
+      const { workedH, restH } = computeWorkedMs(e.id);
+      const horasExtra = (s.r.maxHoras>0 && s.horas>s.r.maxHoras) ? (s.horas-s.r.maxHoras) : 0;
+      const { error } = await sb.from("cierres_semana").upsert({
+        empresa_id: state.empresaId, empleado_id: e.id,
+        semana_inicio: inicio, semana_fin: fin,
+        horas_planificadas: s.horas, horas_fichadas: workedH, horas_descanso: restH,
+        horas_extra: horasExtra, tiene_franco: s.hasFranco,
+        feriados: s.feriadosTrabajados,
+      }, { onConflict: "empleado_id,semana_inicio" });
+      if(error) throw new Error("No se pudo cerrar la semana para "+e.name+": "+error.message);
+    }
+    await fetchCierres();
+  } catch(err){
+    state.error = err.message || "No se pudo cerrar la semana.";
+  } finally {
+    state.cerrandoSemana = false;
+    render();
+  }
+}
+async function fetchCierres(){
+  if(!state.empresaId) return;
+  const { data } = await sb.from("cierres_semana").select("*").eq("empresa_id", state.empresaId).order("semana_inicio",{ascending:false});
+  state.cierres = data||[];
+}
+
+async function fetchAusenciasDelMes(){
+  if(!state.empresaId) return;
+  const empIds = state.employees.map(e=>e.id);
+  if(!empIds.length){ state.ausenciasMes = []; return; }
+  const now = new Date();
+  const inicioMes = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  const finMes = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().slice(0,10);
+  const { data } = await sb.from("ausencias").select("*").in("empleado_id", empIds).gte("fecha", inicioMes).lte("fecha", finMes).order("fecha",{ascending:false});
+  state.ausenciasMes = (data||[]).map(row=>{ const emp = state.employees.find(e=>e.id===row.empleado_id); return {...row, empleadoNombre: emp?emp.name:"—"}; });
+}
+async function irAReportes(){
+  state.view = "reportes";
+  render();
+  try{ await fetchAusenciasDelMes(); await fetchCierres(); }catch(e){ state.error="No se pudo cargar el resumen del mes."; }
+  render();
+}
+function volverAlPanel(){ state.view="dashboard"; render(); }
+
 /* ---- Nav ---- */
 function renderNavRight(){
   const el = document.getElementById("navRight");
   const pend = state.ausenciasPendientes ? state.ausenciasPendientes.length : 0;
   let html = `<button class="pill ${state.role==='admin'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('admin')">Encargado${pend>0?` <span style="background:var(--coral); color:#fff; border-radius:999px; padding:1px 7px; font-size:10px; margin-left:5px; font-weight:800;">${pend}</span>`:''}</button>
     <button class="pill ${state.role==='employee'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('employee')">Equipo</button>`;
+  if(state.role==="admin" && state.empresaId){
+    html += `<button class="pill ${state.view==='reportes'?'pill-lime':'pill-ghost'} pill-btn" onclick="irAReportes()">📊 Reportes</button>`;
+  }
   if(state.role==="admin" && state.view==="dashboard"){
     html += `<button id="copyLinkBtn" class="pill pill-lime pill-btn" onclick="copyLink()">🔗 Copiar link del equipo</button>
       <button class="pill pill-ghost pill-btn" onclick="update({view:'wizard', step:0})">Reconfigurar</button>`;
@@ -863,7 +961,7 @@ function render(){
     else if(!state.employeeSession){ html += renderEmployeeJoin(); }
     else { html += renderEmployeeDashboard(); }
   } else {
-    html += state.view==="wizard" ? renderWizard() : renderDashboard();
+    html += state.view==="wizard" ? renderWizard() : state.view==="reportes" ? renderReportesPage() : renderDashboard();
   }
   app.innerHTML = html;
 
@@ -1053,6 +1151,102 @@ function renderReportes(){
     ${rows}
   </div>`;
 }
+function exportarExcel(){
+  const wsData = [["Empleado","Horas planificadas","Horas fichadas","Horas descanso","Horas extra","Descanso semanal"]];
+  state.employees.forEach(e=>{
+    const s = statsFor(e.id);
+    const { workedH, restH } = computeWorkedMs(e.id);
+    const extra = (s.r.maxHoras>0 && s.horas>s.r.maxHoras) ? (s.horas-s.r.maxHoras) : 0;
+    wsData.push([e.name, s.horas, workedH, restH, extra, s.hasFranco?"Cumplido":"Pendiente"]);
+  });
+  const ws1 = XLSX.utils.aoa_to_sheet(wsData);
+  const faltasData = [["Empleado","Fecha","Motivo","Estado"]];
+  (state.ausenciasMes||[]).forEach(a=> faltasData.push([a.empleadoNombre, a.fecha, a.motivo||"", a.estado_revision]));
+  const ws2 = XLSX.utils.aoa_to_sheet(faltasData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, "Reporte semanal");
+  XLSX.utils.book_append_sheet(wb, ws2, "Faltas del mes");
+  XLSX.writeFile(wb, `Ronda_${(state.empresaName||'reporte').replace(/[^a-z0-9]/gi,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+function renderCierres(){
+  const cierres = state.cierres || [];
+  if(!cierres.length) return `<div class="card" style="box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--text-light-sec); font-size:13px; margin-top:14px;">Todavía no cerraste ninguna semana.</div>`;
+  const porSemana = {};
+  cierres.forEach(c=>{ const k=c.semana_inicio; if(!porSemana[k]) porSemana[k]=[]; porSemana[k].push(c); });
+  const semanas = Object.keys(porSemana).sort().reverse();
+  return `<div class="accordion-card" style="margin-top:14px;"><h3>Semanas cerradas</h3>
+    ${semanas.map(k=>{
+      const rows = porSemana[k];
+      const fin = rows[0].semana_fin;
+      const totalExtra = rows.reduce((a,r)=>a+Number(r.horas_extra),0);
+      return `<details class="acc">
+        <summary><span>${k.slice(8,10)}/${k.slice(5,7)} al ${fin.slice(8,10)}/${fin.slice(5,7)} — ${totalExtra>0?totalExtra+'h extra en el equipo':'sin horas extra'}</span>
+          <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </summary>
+        <div class="acc-body">
+          ${rows.map(r=>{ const emp = state.employees.find(e=>e.id===r.empleado_id);
+            return `<div class="history-line">👤 <b>${emp?emp.name:'—'}</b> — ${r.horas_planificadas}h planificadas · ${r.horas_fichadas}h fichadas · ${r.horas_extra}h extra · descanso ${r.tiene_franco?'cumplido':'pendiente'}</div>`;
+          }).join("")}
+        </div>
+      </details>`;
+    }).join("")}
+  </div>`;
+}
+
+function renderReportesPage(){
+  const now = new Date();
+  const mesNombre = now.toLocaleDateString("es-UY",{month:"long", year:"numeric"});
+  const mes = state.ausenciasMes || [];
+  const aprobadas = mes.filter(a=>a.estado_revision==="aprobado").length;
+  const rechazadas = mes.filter(a=>a.estado_revision==="rechazado").length;
+  const pendientes = mes.filter(a=>a.estado_revision==="pendiente").length;
+
+  let horasExtraTotal = 0;
+  state.employees.forEach(e=>{ const s = statsFor(e.id); if(s.r.maxHoras>0 && s.horas>s.r.maxHoras) horasExtraTotal += (s.horas-s.r.maxHoras); });
+
+  const inicioMes = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  const finMes = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().slice(0,10);
+  const feriadosMes = FERIADOS_2026.filter(f=> f.fecha>=inicioMes && f.fecha<=finMes);
+
+  const resumen = `<div class="stat-grid">
+    <div class="stat-card"><div class="stat-label">📋 Faltas este mes</div><div class="stat-value display">${mes.length}</div><div class="stat-sub">${aprobadas} aprobadas · ${rechazadas} rechazadas · ${pendientes} pendientes</div></div>
+    <div class="stat-card"><div class="stat-label">⏱ Horas extra (esta semana)</div><div class="stat-value display ${horasExtraTotal>0?'tone-coral':'tone-lime'}">${horasExtraTotal}h</div><div class="stat-sub">Sumado entre todo el equipo</div></div>
+    <div class="stat-card"><div class="stat-label">🎉 Feriados este mes</div><div class="stat-value display">${feriadosMes.length}</div><div class="stat-sub">${feriadosMes.map(f=>f.fecha.slice(8,10)+'/'+f.fecha.slice(5,7)+' · '+f.nombre).join(' · ')||'Ninguno'}</div></div>
+  </div>`;
+
+  const listaMes = mes.length ? `<div class="accordion-card" style="margin-top:0;"><h3>Faltas reportadas este mes</h3>
+    ${mes.map(a=>`<div class="pending-card" style="margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="font-size:13px;"><b>${a.empleadoNombre}</b> · ${a.fecha} · ${a.motivo||'Sin motivo'}</span>
+        <span class="badge badge-${a.estado_revision}">${a.estado_revision}</span>
+      </div>
+    </div>`).join("")}
+  </div>` : `<div class="card" style="box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--text-light-sec); font-size:13px;">Todavía no se reportó ninguna falta este mes.</div>`;
+
+  const hoyEsFinDeSemana = todayIndex()===6;
+  const cerrarBtn = `<div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:0;">
+    <div><b style="font-size:14px;">📦 Cerrar esta semana</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">${hoyEsFinDeSemana?'Guardá los números de esta semana como registro fijo — para liquidación o historial.':'La semana todavía no terminó — podés cerrarla igual, pero va a quedar parcial.'}</div></div>
+    <button class="btn btn-primary" style="padding:9px 18px; font-size:12.5px;" ${state.cerrandoSemana?'disabled':''} onclick="cerrarSemana()">${state.cerrandoSemana?'Cerrando…':'Cerrar semana'}</button>
+  </div>`;
+
+  return `<div class="wizard-wrap" style="max-width:900px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+      <h2 class="display" style="margin:0; font-size:24px;">📊 Reportes de ${mesNombre}</h2>
+      <div style="display:flex; gap:8px;">
+        <button class="pill pill-lime pill-btn" onclick="exportarExcel()">⬇️ Excel</button>
+        <button class="pill pill-ghost pill-btn" onclick="volverAlPanel()">← Volver al panel</button>
+      </div>
+    </div>
+    ${cerrarBtn}
+    ${resumen}
+    ${listaMes}
+    ${renderReportes()}
+    ${renderCierres()}
+    <p style="font-size:11.5px; color:var(--text-dark-sec); text-align:center; margin-top:14px;">Horas extra y descanso en vivo son de esta semana. Para ver semanas anteriores, cerralas con el botón de arriba — quedan guardadas para siempre.</p>
+  </div>`;
+}
+
 function renderDashboard(){
   const activeLocal = state.locales.find(l=>l.id===state.activeLocalId) || state.locales[0];
   const r = rulesForConfig(activeLocal ? activeLocal.config : null);
@@ -1070,13 +1264,28 @@ function renderDashboard(){
   const calendario = `<div class="card" style="box-shadow:0 30px 70px -20px rgba(0,0,0,0.65);">
     <h2 class="display" style="margin:0 0 3px; font-size:21px;">📅 Horario de la semana</h2>
     <p class="sub" style="margin-bottom:6px;">Quién trabaja, cuándo, y en qué sucursal — ${activeLocal?activeLocal.nombre:'sin sucursal'} y el resto del equipo.</p>
+    ${state.avisoCalendario ? `<div class="alert-card" style="border-left-color:var(--coral); margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+        <div>⚠️ <b>${state.avisoCalendario.nombre}</b>: ${state.avisoCalendario.mensajes.join(' · ')}.</div>
+        <button onclick="cerrarAvisoCalendario()" style="color:var(--text-light-sec); font-weight:800; flex-shrink:0;">✕</button>
+      </div>
+    </div>` : ""}
     ${renderCalendarControls()}
     <div style="overflow-x:auto; border:1px solid var(--mint-dim); border-radius:var(--radius-sm);"><table style="min-width:640px;">
       <thead><tr><th>Empleado</th>${DAYS.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody>
     </table></div>
     <div class="legend" style="padding-left:0; padding-right:0;"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Turno asignado</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige sucursal + turno</span></div>
   </div>`;
-  const reportes = renderReportes();
+  const reportesTeaser = `<div class="card" style="margin-top:18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <div><b style="font-size:14px;">📊 Reportes</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">Horas extra, faltas del mes, feriados y el detalle minuto a minuto de cada uno.</div></div>
+    <button class="btn btn-primary" style="padding:9px 18px; font-size:12.5px;" onclick="irAReportes()">Ver reportes →</button>
+  </div>`;
+  const huecosLines = state.ausenciasPendientes.map(a=>{
+    const hueco = huecoPorAusencia(a);
+    if(!hueco) return "";
+    return `<div class="alert-line">🔄 <b>${a.empleadoNombre}</b> reportó falta el ${a.fecha} y tenía <b>${hueco.turnoNombre}</b> asignado en ${hueco.localNombre} — reprogramá ese turno.</div>`;
+  }).filter(Boolean);
+  const huecosBlock = huecosLines.length ? `<div class="alert-card" style="margin-top:18px; border-left-color:var(--forest);"><b style="display:block;margin-bottom:6px;">🔄 Turnos a reprogramar</b>${huecosLines.join("")}</div>` : "";
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
   const estado = `<div class="side-card" style="margin-top:18px;"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
     <div class="status-grid">
@@ -1111,7 +1320,7 @@ function renderDashboard(){
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${activeLocal?activeLocal.nombre:'—'}</div><div style="font-size:13px; color:var(--text-light-sec);">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">👥 Equipo</div><div style="font-size:13px; color:var(--text-light-sec);">${state.employees.length} personas · ${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
   </div>`;
-  return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${reportes}${alertBlock}
+  return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${huecosBlock}${reportesTeaser}${alertBlock}
     ${estado}${pendientes}
     ${statMini}
     <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
