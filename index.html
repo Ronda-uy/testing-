@@ -83,7 +83,7 @@
   h2.title{ font-size:25px; margin:0 0 6px; }
   p.sub{ font-size:14px; color:var(--text-light-sec); margin:0 0 20px; line-height:1.5; }
 
-  .opt{ background:#fff; border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:10px; overflow:hidden; }
+  .opt{ background:#fff; color:var(--ink); border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:10px; overflow:hidden; }
   .opt[open]{ border-color:var(--lime-dim); box-shadow:0 0 0 3px rgba(188,237,7,0.15); }
   .opt.selected{ border-color:var(--lime-dim); background:#F7FFEB; }
   .opt summary{ list-style:none; cursor:pointer; padding:16px 18px; display:flex; align-items:flex-start; gap:12px; }
@@ -111,7 +111,7 @@
   .btn-block{ width:100%; }
   .wizard-nav{ display:flex; justify-content:space-between; margin-top:22px; }
 
-  .emp-row{ display:flex; align-items:center; gap:12px; padding:12px 14px; background:#fff; border:1px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:8px;}
+  .emp-row{ display:flex; align-items:center; gap:12px; padding:12px 14px; background:#fff; color:var(--ink); border:1px solid var(--mint-dim); border-radius:var(--radius-sm); margin-bottom:8px;}
   .avatar{ width:32px;height:32px;border-radius:50%; background:var(--lime); color:var(--ink); display:flex;align-items:center;justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;}
   .emp-name{ font-weight:700; font-size:14px; }
   .emp-role{ font-size:11.5px; color:var(--text-light-sec); }
@@ -125,14 +125,14 @@
   .summary-row input{ text-align:right; border:none; background:transparent; font-weight:700; padding:0; width:auto; }
 
   .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:18px; }
-  .stat-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:20px; }
+  .stat-card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:20px; }
   .stat-label{ display:flex; align-items:center; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text-light-sec); margin-bottom:10px; }
-  .stat-value{ font-size:21px; }
+  .stat-value{ font-size:21px; color:var(--ink); }
   .stat-sub{ font-size:11.5px; color:var(--text-light-sec); margin-top:3px; }
   .tone-coral{ color:var(--coral-dim); }
   .tone-lime{ color:var(--forest); }
 
-  .alert-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:16px 20px; border-left:5px solid var(--coral); margin-bottom:18px; }
+  .alert-card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:16px 20px; border-left:5px solid var(--coral); margin-bottom:18px; }
   .alert-line{ font-size:13px; padding:5px 0; line-height:1.5; }
 
   .dash-grid{ display:grid; grid-template-columns:1fr 270px; gap:18px; }
@@ -162,7 +162,7 @@
   .status-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
   .status-label{ font-size:10px; }
 
-  .accordion-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:8px 20px; margin-top:18px; }
+  .accordion-card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:8px 20px; margin-top:18px; }
   .accordion-card h3{ font-size:14px; padding:14px 0 4px; margin:0; }
   details.acc{ border-top:1px solid var(--mint-dim); }
   details.acc:last-child{ padding-bottom:6px; }
@@ -194,9 +194,9 @@
 
   .cell-select{ width:100%; border-radius:10px; border:1.5px solid var(--mint-dim); font-size:9.5px; font-weight:700; padding:9px 2px; text-align:center; text-align-last:center; -webkit-appearance:none; appearance:none; }
 
-  .new-local-form{ background:#fff; border:1.5px dashed var(--lime-dim); border-radius:var(--radius-sm); padding:18px; margin-top:14px; }
+  .new-local-form{ background:#fff; color:var(--ink); border:1.5px dashed var(--lime-dim); border-radius:var(--radius-sm); padding:18px; margin-top:14px; }
 
-  .pending-card{ background:#fff; border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); padding:14px 16px; margin-bottom:10px; }
+  .pending-card{ background:#fff; color:var(--ink); border:1.5px solid var(--mint-dim); border-radius:var(--radius-sm); padding:14px 16px; margin-bottom:10px; }
   .pending-thumb{ max-width:160px; border-radius:10px; margin:8px 0; display:block; }
   .badge{ font-size:10px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase; letter-spacing:.04em; display:inline-block; }
   .badge-pendiente{ background:rgba(245,195,68,0.3); color:#7A5C0A; }
@@ -252,6 +252,7 @@ function freshState(){
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
+    confirmando:null,
     error:null, saving:false,
   };
 }
@@ -393,7 +394,7 @@ function fmtTime(iso){ return new Date(iso).toLocaleTimeString("es-UY",{hour:"2-
 
 /* ---- Sucursales ---- */
 function selectLocalTab(id){ state.activeLocalId=id; render(); }
-function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"" }; render(); }
+function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"", personasPorTurno:"1" }; render(); }
 function updateNewLocalDraft(patch){ Object.assign(state.newLocalDraft, patch); render(); }
 function cancelAddLocal(){ state.addingLocal=false; state.newLocalDraft=null; render(); }
 function removeLocalDraft(id){
@@ -410,7 +411,7 @@ async function saveNewLocal(){
   if(d.rubro==="personalizado" && (!(Number(d.descansoCustom)>0) || !(Number(d.maxHorasCustom)>0))){
     state.error="Completá el descanso y el máximo de horas personalizado."; render(); return;
   }
-  const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom };
+  const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom, personasPorTurno: Number(d.personasPorTurno)>0 ? Number(d.personasPorTurno) : 1 };
   state.error=null;
   if(!state.empresaId){
     const id = "tmp"+Date.now();
@@ -471,6 +472,26 @@ async function addEmployee(){
   input.value=""; render();
 }
 
+function todaysLog(empId){
+  const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+  return (state.statusHistory[empId]||[]).filter(h=> new Date(h.created_at) >= startOfDay).sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+}
+function todayFlowState(empId){
+  const log = todaysLog(empId);
+  if(!log.length) return { fase:"sin_marcar" };
+  const last = log[log.length-1];
+  if(last.estado==="local") return { fase:"trabajando", desde:last.created_at };
+  if(last.estado==="descanso") return { fase:"en_descanso", desde:last.created_at };
+  if(last.estado==="afuera") return { fase:"finalizado", hora:last.created_at };
+  return { fase:"sin_marcar" };
+}
+function pedirConfirmacion(tipo){ state.confirmando = tipo; render(); }
+function cancelarConfirmacion(){ state.confirmando = null; render(); }
+async function confirmarMarca(empId, val){
+  state.confirmando = null;
+  await setStatus(empId, val);
+}
+
 /* ---- Estado + historial ---- */
 async function setStatus(empId, val){
   const todayEntry = (state.turnos[empId]||[])[todayIndex()];
@@ -503,10 +524,11 @@ function statsFor(empId){
 function statusMeta(empId){
   const todayEntry = (state.turnos[empId]||[])[todayIndex()];
   if(todayEntry && todayEntry.tipo==="franco") return { text:"Día libre", color:"transparent", outline:true };
-  const st = state.clockStatus[empId]||"afuera";
-  if(st==="local") return { text:"En el local", color:"var(--lime)" };
-  if(st==="descanso") return { text:"En su descanso", color:"var(--amber)" };
-  return { text:"Afuera", color:"var(--text-dark-sec)", dim:true };
+  const flow = todayFlowState(empId);
+  if(flow.fase==="finalizado") return { text:"Salida "+fmtTime(flow.hora), color:"var(--text-dark-sec)", dim:true };
+  if(flow.fase==="en_descanso") return { text:"En su descanso", color:"var(--amber)" };
+  if(flow.fase==="trabajando") return { text:"En el local desde "+fmtTime(flow.desde), color:"var(--lime)" };
+  return { text:"Sin marcar todavía", color:"var(--text-dark-sec)", dim:true };
 }
 
 /* ---- Reportes: horas reales fichadas vs planificadas ---- */
@@ -541,7 +563,13 @@ function generarAutomatico(){
   // 2) Armamos la lista de huecos a cubrir: cada sucursal, cada día, mañana y tarde.
   let slots = [];
   state.locales.forEach(loc=>{
-    for(let d=0; d<7; d++){ slots.push({localId:loc.id, day:d, tipo:"manana"}); slots.push({localId:loc.id, day:d, tipo:"tarde"}); }
+    const n = Math.max(1, Number(loc.config.personasPorTurno)||1);
+    for(let d=0; d<7; d++){
+      for(let i=0;i<n;i++){
+        slots.push({localId:loc.id, day:d, tipo:"manana"});
+        slots.push({localId:loc.id, day:d, tipo:"tarde"});
+      }
+    }
   });
   slots.sort((a,b)=>a.day-b.day);
   const horas = {}; emps.forEach(e=>horas[e.id]=0);
@@ -642,7 +670,8 @@ async function reviewAusencia(id, decision){
 /* ---- Nav ---- */
 function renderNavRight(){
   const el = document.getElementById("navRight");
-  let html = `<button class="pill ${state.role==='admin'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('admin')">Encargado</button>
+  const pend = state.ausenciasPendientes ? state.ausenciasPendientes.length : 0;
+  let html = `<button class="pill ${state.role==='admin'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('admin')">Encargado${pend>0?` <span style="background:var(--coral); color:#fff; border-radius:999px; padding:1px 7px; font-size:10px; margin-left:5px; font-weight:800;">${pend}</span>`:''}</button>
     <button class="pill ${state.role==='employee'?'pill-lime':'pill-ghost'} pill-btn" onclick="switchRole('employee')">Equipo</button>`;
   if(state.role==="admin" && state.view==="dashboard"){
     html += `<button id="copyLinkBtn" class="pill pill-lime pill-btn" onclick="copyLink()">🔗 Copiar link del equipo</button>
@@ -790,6 +819,10 @@ function renderNewLocalForm(){
       <button class="status-btn ${d.mediaHora==='fija'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'fija'})">Media hora fija</button>
       <button class="status-btn ${d.mediaHora==='variable'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'variable'})">Media hora variable</button>
     </div>`:""}
+    <div style="margin-bottom:16px;">
+      <div class="field-label">Personas necesarias por turno (mañana y tarde)</div>
+      <input id="inp-local-personas" type="text" inputmode="numeric" value="${d.personasPorTurno||'1'}" oninput="updateNewLocalDraft({personasPorTurno:this.value})" placeholder="1" />
+    </div>
     <div style="display:flex; gap:10px;">
       <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
@@ -845,9 +878,9 @@ function renderDashboard(){
   </div>`;
   const reportes = renderReportes();
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
-  const estado = `<div class="side-card"><div class="side-title">Estado del equipo</div>
+  const estado = `<div class="side-card"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
     ${state.employees.map(e=>{ const m = statusMeta(e.id);
-      return `<button class="status-item" onclick="cycleStatus('${e.id}')"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></button>`;
+      return `<div class="status-item"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></div>`;
     }).join("")}
   </div>`;
   const pendientes = state.ausenciasPendientes.length ? `<div class="accordion-card" style="padding-bottom:16px;"><h3>Faltas y certificados pendientes</h3>
@@ -913,6 +946,43 @@ async function joinTeam(){
   render();
   loadMisAusencias(found.id);
 }
+function renderStatusFlow(empId){
+  const flow = todayFlowState(empId);
+  if(flow.fase==="sin_marcar"){
+    if(state.confirmando==="entrada"){
+      return `<div class="new-local-form" style="text-align:center;">
+        <p style="margin:0 0 14px; font-weight:700;">¿Confirmás que estás entrando ahora?</p>
+        <div style="display:flex; gap:10px; justify-content:center;">
+          <button class="btn btn-ghost" onclick="cancelarConfirmacion()">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmarMarca('${empId}','local')">Sí, marcar entrada</button>
+        </div>
+      </div>`;
+    }
+    return `<button class="btn btn-primary btn-block" onclick="pedirConfirmacion('entrada')">▶️ Marcar entrada</button>`;
+  }
+  if(flow.fase==="trabajando"){
+    if(state.confirmando==="salida"){
+      return `<div class="new-local-form" style="text-align:center;">
+        <p style="margin:0 0 14px; font-weight:700;">¿Confirmás tu salida? No vas a poder editarlo después.</p>
+        <div style="display:flex; gap:10px; justify-content:center;">
+          <button class="btn btn-ghost" onclick="cancelarConfirmacion()">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmarMarca('${empId}','afuera')">Sí, marcar salida</button>
+        </div>
+      </div>`;
+    }
+    return `<div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="status-btn" onclick="setStatus('${empId}','descanso')">☕ Iniciar mi descanso</button>
+      <button class="status-btn" onclick="pedirConfirmacion('salida')">⏹ Marcar salida</button>
+    </div>`;
+  }
+  if(flow.fase==="en_descanso"){
+    return `<button class="btn btn-primary btn-block" onclick="setStatus('${empId}','local')">▶️ Volver del descanso</button>`;
+  }
+  if(flow.fase==="finalizado"){
+    return `<div class="libre-banner" style="background:rgba(188,237,7,0.15); border-color:var(--lime-dim); color:var(--forest);">✅ Marcaste tu salida hoy a las ${fmtTime(flow.hora)}. Quedó registrado — no se puede editar.</div>`;
+  }
+  return "";
+}
 function renderEmployeeDashboard(){
   const me = state.employees.find(e=>e.id===state.employeeSession);
   if(!me){ state.employeeSession=null; return renderEmployeeJoin(); }
@@ -929,11 +999,7 @@ function renderEmployeeDashboard(){
   }).join("");
   const statusBlock = isLibreToday
     ? `<div class="libre-banner">🎉 Hoy es tu día libre. ¡Disfrutalo!</div>`
-    : `<div><div class="field-label" style="margin-bottom:8px;">¿Cómo estás ahora?${todayLocal?' — hoy en '+todayLocal:''}</div><div class="status-toggle">
-        <button class="status-btn ${st==='local'?'active':''}" onclick="setStatus('${me.id}','local')">En el local</button>
-        <button class="status-btn ${st==='descanso'?'active':''}" onclick="setStatus('${me.id}','descanso')">En mi descanso</button>
-        <button class="status-btn ${st==='afuera'?'active':''}" onclick="setStatus('${me.id}','afuera')">Afuera</button>
-      </div></div>`;
+    : `<div><div class="field-label" style="margin-bottom:8px;">${todayLocal?'Hoy en '+todayLocal:''}</div>${renderStatusFlow(me.id)}</div>`;
   const faltaSection = state.reportandoFalta ? `<div class="new-local-form">
       <div class="field-label">Fecha</div>
       <input id="inp-fecha" type="date" value="${state.nuevaAusencia.fecha}" oninput="updateNuevaAusencia({fecha:this.value})" style="margin-bottom:12px;" />
