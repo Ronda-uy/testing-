@@ -125,6 +125,7 @@
   .summary-row input{ text-align:right; border:none; background:transparent; font-weight:700; padding:0; width:auto; }
 
   .stat-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:18px; }
+  @media (max-width:820px){ .stat-grid{ grid-template-columns:1fr; } }
   .stat-card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:20px; }
   .stat-label{ display:flex; align-items:center; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--text-light-sec); margin-bottom:10px; }
   .stat-value{ font-size:21px; color:var(--ink); }
@@ -135,8 +136,9 @@
   .alert-card{ background:var(--mint); color:var(--ink); border-radius:var(--radius); box-shadow:var(--shadow-soft); padding:16px 20px; border-left:5px solid var(--coral); margin-bottom:18px; }
   .alert-line{ font-size:13px; padding:5px 0; line-height:1.5; }
 
-  .dash-grid{ display:grid; grid-template-columns:1fr 270px; gap:18px; }
-  @media (max-width:820px){ .dash-grid{ grid-template-columns:1fr; } .stat-grid{ grid-template-columns:1fr; } }
+  .status-grid{ display:flex; flex-wrap:wrap; gap:10px; }
+  .status-chip{ flex:1 1 170px; max-width:260px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-radius:12px; background:rgba(238,253,230,0.05); }
+  .pending-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(260px,1fr)); gap:12px; }
 
   .grid-card{ background:var(--mint); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
   table{ width:100%; border-collapse:collapse; }
@@ -240,6 +242,31 @@ const RUBROS = {
     detalle:"El descanso semanal mínimo para industria es de 24 horas consecutivas. La jornada máxima diaria es de 8 horas y el máximo semanal es de 48 horas." },
 };
 const DAYS = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+const FERIADOS_2026 = [
+  {fecha:"2026-01-01", nombre:"Año Nuevo", laborable:false},
+  {fecha:"2026-01-06", nombre:"Día de Reyes", laborable:true},
+  {fecha:"2026-02-16", nombre:"Carnaval", laborable:true},
+  {fecha:"2026-02-17", nombre:"Carnaval", laborable:true},
+  {fecha:"2026-04-02", nombre:"Jueves Santo", laborable:true},
+  {fecha:"2026-04-03", nombre:"Viernes Santo", laborable:true},
+  {fecha:"2026-04-19", nombre:"Desembarco de los 33 Orientales", laborable:true},
+  {fecha:"2026-05-01", nombre:"Día de los Trabajadores", laborable:false},
+  {fecha:"2026-05-18", nombre:"Batalla de Las Piedras", laborable:true},
+  {fecha:"2026-06-19", nombre:"Natalicio de Artigas", laborable:true},
+  {fecha:"2026-07-18", nombre:"Jura de la Constitución", laborable:false},
+  {fecha:"2026-08-25", nombre:"Declaración de la Independencia", laborable:false},
+  {fecha:"2026-10-12", nombre:"Día de la Diversidad Cultural", laborable:true},
+  {fecha:"2026-11-02", nombre:"Día de los Difuntos", laborable:true},
+  {fecha:"2026-12-25", nombre:"Navidad", laborable:false},
+];
+function findFeriado(fechaISO){ return FERIADOS_2026.find(f=>f.fecha===fechaISO) || null; }
+function fechaParaDia(d){
+  const now = new Date();
+  const dow = (now.getDay()+6)%7;
+  const monday = new Date(now); monday.setDate(now.getDate()-dow); monday.setHours(0,0,0,0);
+  const target = new Date(monday); target.setDate(monday.getDate()+d);
+  return target.toISOString().slice(0,10);
+}
 const STEP_LABELS = ["Negocio","Sucursales","Equipo","Confirmar"];
 
 function freshState(){
@@ -254,6 +281,7 @@ function freshState(){
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
     confirmando:null,
+    rechazando:null,
     error:null, saving:false,
   };
 }
@@ -263,40 +291,46 @@ let loaded = false;
 function getEmpresaIdFromUrl(){ return new URLSearchParams(window.location.search).get("empresa"); }
 function setEmpresaIdInUrl(id){ const url = new URL(window.location); url.searchParams.set("empresa", id); window.history.replaceState({}, "", url); }
 
+async function fetchEmpresaData(empresaId){
+  const { data: locs } = await sb.from("locales").select("*").eq("empresa_id", empresaId).order("created_at");
+  const { data: emps } = await sb.from("empleados").select("*").eq("empresa_id", empresaId).order("created_at");
+  const empIds = (emps||[]).map(e=>e.id);
+  let turnosRows = [];
+  if(empIds.length){ const { data: t } = await sb.from("turnos").select("*").in("empleado_id", empIds); turnosRows = t||[]; }
+  let logRows = [];
+  if(empIds.length){
+    const now = new Date();
+    const dow = (now.getDay()+6)%7;
+    const monday = new Date(now); monday.setDate(now.getDate()-dow); monday.setHours(0,0,0,0);
+    const { data: l } = await sb.from("estados_log").select("*").in("empleado_id", empIds).gte("created_at", monday.toISOString()).order("created_at",{ascending:true});
+    logRows = l||[];
+  }
+  let pendRows = [];
+  if(empIds.length){
+    const { data: p } = await sb.from("ausencias").select("*").in("empleado_id", empIds).eq("estado_revision","pendiente").order("created_at",{ascending:false});
+    pendRows = p||[];
+  }
+  state.locales = locs||[];
+  if(!state.activeLocalId || !state.locales.find(l=>l.id===state.activeLocalId)){
+    state.activeLocalId = state.locales[0] ? state.locales[0].id : null;
+  }
+  state.employees = (emps||[]).map(row=>({id:row.id, name:row.nombre, role:row.rol||"Sin definir"}));
+  state.turnos = {}; state.clockStatus = {}; state.statusHistory = {};
+  (emps||[]).forEach(row=>{ state.turnos[row.id]=Array(7).fill(null); state.clockStatus[row.id]=row.estado||"afuera"; state.statusHistory[row.id]=[]; });
+  turnosRows.forEach(t=>{ if(state.turnos[t.empleado_id]) state.turnos[t.empleado_id][t.dia] = {tipo:t.tipo, localId:t.local_id}; });
+  logRows.forEach(l=>{ if(state.statusHistory[l.empleado_id]) state.statusHistory[l.empleado_id].push({estado:l.estado, created_at:l.created_at}); });
+  state.ausenciasPendientes = (pendRows||[]).map(p=>{ const emp = (emps||[]).find(e=>e.id===p.empleado_id); return {...p, empleadoNombre: emp?emp.nombre:"—"}; });
+}
+
 async function loadState(){
  try{
   const empresaId = getEmpresaIdFromUrl();
   if(empresaId){
     const { data: empresaRow, error: e1 } = await sb.from("empresas").select("*").eq("id", empresaId).single();
     if(!e1 && empresaRow){
-      const { data: locs } = await sb.from("locales").select("*").eq("empresa_id", empresaId).order("created_at");
-      const { data: emps } = await sb.from("empleados").select("*").eq("empresa_id", empresaId).order("created_at");
-      const empIds = (emps||[]).map(e=>e.id);
-      let turnosRows = [];
-      if(empIds.length){ const { data: t } = await sb.from("turnos").select("*").in("empleado_id", empIds); turnosRows = t||[]; }
-      let logRows = [];
-      if(empIds.length){
-        const now = new Date();
-        const dow = (now.getDay()+6)%7;
-        const monday = new Date(now); monday.setDate(now.getDate()-dow); monday.setHours(0,0,0,0);
-        const { data: l } = await sb.from("estados_log").select("*").in("empleado_id", empIds).gte("created_at", monday.toISOString()).order("created_at",{ascending:true});
-        logRows = l||[];
-      }
-      let pendRows = [];
-      if(empIds.length){
-        const { data: p } = await sb.from("ausencias").select("*").in("empleado_id", empIds).eq("estado_revision","pendiente").order("created_at",{ascending:false});
-        pendRows = p||[];
-      }
       state.empresaId = empresaId;
       state.empresaName = empresaRow.nombre;
-      state.locales = locs||[];
-      state.activeLocalId = (locs&&locs[0]) ? locs[0].id : null;
-      state.employees = (emps||[]).map(row=>({id:row.id, name:row.nombre, role:row.rol||"Sin definir"}));
-      state.turnos = {}; state.clockStatus = {}; state.statusHistory = {};
-      (emps||[]).forEach(row=>{ state.turnos[row.id]=Array(7).fill(null); state.clockStatus[row.id]=row.estado||"afuera"; state.statusHistory[row.id]=[]; });
-      turnosRows.forEach(t=>{ if(state.turnos[t.empleado_id]) state.turnos[t.empleado_id][t.dia] = {tipo:t.tipo, localId:t.local_id}; });
-      logRows.forEach(l=>{ if(state.statusHistory[l.empleado_id]) state.statusHistory[l.empleado_id].push({estado:l.estado, created_at:l.created_at}); });
-      state.ausenciasPendientes = (pendRows||[]).map(p=>{ const emp = (emps||[]).find(e=>e.id===p.empleado_id); return {...p, empleadoNombre: emp?emp.nombre:"—"}; });
+      await fetchEmpresaData(empresaId);
       state.view = "dashboard";
     } else {
       state.error = "No encontramos ese negocio — revisá el link o creá uno nuevo.";
@@ -406,7 +440,16 @@ async function activarPanel(){
   }
 }
 
-function switchRole(r){ state.role=r; if(r==="admin" && state.empresaId) state.view="dashboard"; render(); }
+async function switchRole(r){
+  state.role=r;
+  if(r==="admin" && state.empresaId){
+    state.view="dashboard";
+    render();
+    try{ await fetchEmpresaData(state.empresaId); }
+    catch(e){ state.error="No se pudo actualizar el panel."; }
+  }
+  render();
+}
 function resetAll(){
   const url = new URL(window.location); url.searchParams.delete("empresa"); window.history.replaceState({}, "", url);
   state = freshState(); render();
@@ -422,7 +465,7 @@ function fmtTime(iso){ return new Date(iso).toLocaleTimeString("es-UY",{hour:"2-
 
 /* ---- Sucursales ---- */
 function selectLocalTab(id){ state.activeLocalId=id; render(); }
-function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"", turnos:[] }; render(); }
+function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"", turnos:[], convenioAplica:false, convenioNombre:"", notas:"" }; render(); }
 function aplicarPreset(key){
   const preset = PRESETS_TURNO[key];
   if(!preset) return;
@@ -461,6 +504,7 @@ async function saveNewLocal(){
     state.error="Elegí una forma de turnos típica o agregá al menos uno manual."; render(); return;
   }
   const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom,
+    convenioAplica: !!d.convenioAplica, convenioNombre: d.convenioNombre||"", notas: d.notas||"",
     turnos: d.turnos.map(t=>({ id:t.id, nombre:t.nombre, duracionHoras:Number(t.duracionHoras)||8, personasSemana:Number(t.personasSemana)||1, personasFinde:Number(t.personasFinde)||1 })) };
   state.error=null;
   if(!state.empresaId){
@@ -576,11 +620,15 @@ function statsFor(empId){
   const r = employeeRules(empId);
   const days = state.turnos[empId]||Array(7).fill(null);
   let horas = 0, turnos = 0;
-  days.forEach(d=>{
+  const feriadosTrabajados = [];
+  days.forEach((d,idx)=>{
     if(d && d.tipo!=="franco"){
       const t = findTurno(d.localId, d.tipo);
       horas += t ? Number(t.duracionHoras) : 8;
       turnos++;
+      const fecha = fechaParaDia(idx);
+      const fer = findFeriado(fecha);
+      if(fer) feriadosTrabajados.push({fecha, nombre:fer.nombre, laborable:fer.laborable});
     }
   });
   const hasFranco = days.some(d=>d && d.tipo==="franco");
@@ -588,7 +636,16 @@ function statsFor(empId){
   const violations=[];
   if(!hasFranco) violations.push(`todavía no tuvo su descanso semanal (mínimo ${r.descanso}h)`);
   if(r.maxHoras>0 && horas > r.maxHoras) violations.push(`se pasó ${horas-r.maxHoras}h del máximo semanal (lleva ${horas}h de ${r.maxHoras}h)`);
-  return { turnos, horas, hasFranco, francoIdx, violations, r };
+  const hoy = todayIndex();
+  for(let d=0; d<hoy; d++){
+    const entry = days[d];
+    if(entry && entry.tipo!=="franco"){
+      const fecha = fechaParaDia(d);
+      const marco = (state.statusHistory[empId]||[]).some(h=> h.estado==="local" && new Date(h.created_at).toISOString().slice(0,10)===fecha);
+      if(!marco) violations.push(`no fichó entrada el ${DAYS[d]} pese a tener turno asignado`);
+    }
+  }
+  return { turnos, horas, hasFranco, francoIdx, violations, r, feriadosTrabajados };
 }
 function statusMeta(empId){
   const todayEntry = (state.turnos[empId]||[])[todayIndex()];
@@ -598,6 +655,30 @@ function statusMeta(empId){
   if(flow.fase==="en_descanso") return { text:"En su descanso", color:"var(--amber)" };
   if(flow.fase==="trabajando") return { text:"En el local desde "+fmtTime(flow.desde), color:"var(--lime)" };
   return { text:"Sin marcar todavía", color:"var(--text-dark-sec)", dim:true };
+}
+
+function interpretarHistorial(empId){
+  const log = (state.statusHistory[empId]||[]).slice().sort((a,b)=> new Date(a.created_at)-new Date(b.created_at));
+  const eventos = [];
+  let prev = null;
+  log.forEach(entry=>{
+    let label = "Marca";
+    if(entry.estado==="local") label = (prev==="descanso") ? "Fin de descanso" : "Entrada";
+    else if(entry.estado==="descanso") label = "Inicio de descanso";
+    else if(entry.estado==="afuera") label = "Salida";
+    eventos.push({ label, hora: entry.created_at });
+    prev = entry.estado;
+  });
+  return eventos;
+}
+function historialPorDia(empId){
+  const porDia = {};
+  interpretarHistorial(empId).forEach(ev=>{
+    const key = new Date(ev.hora).toISOString().slice(0,10);
+    if(!porDia[key]) porDia[key]=[];
+    porDia[key].push(ev);
+  });
+  return porDia;
 }
 
 /* ---- Reportes: horas reales fichadas vs planificadas ---- */
@@ -731,6 +812,17 @@ async function submitAusencia(){
 async function loadMisAusencias(empId){
   const { data } = await sb.from("ausencias").select("*").eq("empleado_id", empId).order("created_at",{ascending:false});
   state.misAusencias = data||[];
+  render();
+}
+function iniciarRechazo(id){ state.rechazando = { id, motivo:"" }; render(); }
+function cancelarRechazo(){ state.rechazando = null; render(); }
+function updateMotivoRechazo(v){ state.rechazando.motivo = v; render(); }
+async function confirmarRechazo(){
+  const { id, motivo } = state.rechazando;
+  const { error } = await sb.from("ausencias").update({ estado_revision:"rechazado", motivo_rechazo: motivo||null }).eq("id", id);
+  if(error){ state.error="No se pudo actualizar."; render(); return; }
+  state.ausenciasPendientes = state.ausenciasPendientes.filter(a=>a.id!==id);
+  state.rechazando = null;
   render();
 }
 async function reviewAusencia(id, decision){
@@ -910,6 +1002,14 @@ function renderNewLocalForm(){
       </div>`).join("")}
       <button class="btn btn-ghost" style="border:1.5px dashed var(--mint-dim); border-radius:10px; width:100%; padding:10px; font-size:12.5px;" onclick="addTurnoRow()">+ Agregar turno manual</button>
     </div>
+    <div style="margin-bottom:16px;">
+      <div class="opt" style="padding:14px 18px; display:flex; align-items:center; gap:12px; cursor:pointer;" onclick="updateNewLocalDraft({convenioAplica: !state.newLocalDraft.convenioAplica})">
+        <span class="radio ${d.convenioAplica?'on':''}"></span><span class="opt-title" style="font-size:13.5px;">Este local sigue un convenio colectivo particular</span>
+      </div>
+      ${d.convenioAplica ? `<input id="inp-local-convenio" type="text" value="${d.convenioNombre||''}" oninput="updateNewLocalDraft({convenioNombre:this.value})" placeholder="Ej: Convenio de Gastronómicos" style="margin-top:10px;" />` : ""}
+      <div class="field-label" style="margin-top:14px;">Notas u otras excepciones (opcional)</div>
+      <textarea id="inp-local-notas" placeholder="Ej: los sábados el turno tarde termina una hora antes." oninput="updateNewLocalDraft({notas:this.value})" style="min-height:70px;">${d.notas||""}</textarea>
+    </div>
     <div style="display:flex; gap:10px;">
       <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
       <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
@@ -918,25 +1018,39 @@ function renderNewLocalForm(){
 }
 function renderReportes(){
   const rows = state.employees.map(e=>{
-    const planificado = statsFor(e.id).horas;
+    const s = statsFor(e.id);
+    const planificado = s.horas;
     const { workedH, restH } = computeWorkedMs(e.id);
     const diff = Math.round((workedH-planificado)*10)/10;
     const irregular = Math.abs(diff) >= 1;
-    return `<tr>
-      <td style="text-align:left; font-weight:700;">${e.name}</td>
-      <td class="mono" style="text-align:center;">${planificado}h</td>
-      <td class="mono" style="text-align:center;">${workedH}h</td>
-      <td class="mono" style="text-align:center;">${restH}h</td>
-      <td style="text-align:center;">${irregular ? `<span class="badge badge-pendiente">${diff>0?'+':''}${diff}h</span>` : `<span class="badge badge-aprobado">OK</span>`}</td>
-    </tr>`;
+    const feriadoBadges = s.feriadosTrabajados.map(f=>`<span class="badge ${f.laborable?'badge-pendiente':'badge-rechazado'}" title="${f.laborable?'Laborable — se paga normal salvo convenio distinto':'No laborable — corresponde el doble si trabajó'}">🎉 ${f.nombre}</span>`).join(" ");
+    const porDia = historialPorDia(e.id);
+    const dias = Object.keys(porDia).sort();
+    const detalleHtml = dias.length ? dias.map(k=>{
+      const d = new Date(k+"T00:00:00");
+      const nombreDia = DAYS[(d.getDay()+6)%7];
+      const linea = porDia[k].map(ev=>`${ev.label} <b>${fmtTime(ev.hora)}</b>`).join(" → ");
+      return `<div class="history-line">📅 ${nombreDia} ${k.slice(8,10)}/${k.slice(5,7)} — ${linea}</div>`;
+    }).join("") : `<div class="history-line">Todavía no hay marcas de esta semana.</div>`;
+    return `<details class="acc">
+      <summary>
+        <span style="flex:1; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+          <b>${e.name}</b>
+          <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Plan ${planificado}h</span>
+          <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Fichado ${workedH}h</span>
+          <span class="mono" style="font-size:11.5px; color:var(--text-light-sec); font-weight:500;">Descanso ${restH}h</span>
+          ${irregular ? `<span class="badge badge-pendiente">${diff>0?'+':''}${diff}h</span>` : `<span class="badge badge-aprobado">OK</span>`}
+          ${feriadoBadges}
+        </span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </summary>
+      <div class="acc-body">${detalleHtml}</div>
+    </details>`;
   }).join("");
-  return `<div class="card" style="margin-top:18px;">
-    <h3 style="margin:0 0 4px; font-size:15px;">⏱ Reportes — esta semana</h3>
-    <p class="sub" style="margin-bottom:14px;">Planificado (según el calendario) vs. realmente fichado. Se arma solo con cada marca de estado.</p>
-    <div style="overflow-x:auto;"><table style="min-width:480px;">
-      <thead><tr><th style="text-align:left;">Empleado</th><th>Planificado</th><th>Fichado</th><th>Descanso</th><th>Diferencia</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
+  return `<div class="accordion-card" style="margin-top:18px; padding-bottom:6px;">
+    <h3 style="margin:0; padding:14px 0 4px;">⏱ Reportes — esta semana</h3>
+    <p class="sub" style="margin:0 0 4px;">Planificado vs. fichado real. Tocá un empleado para ver el detalle minuto a minuto: entrada, descanso, salida.</p>
+    ${rows}
   </div>`;
 }
 function renderDashboard(){
@@ -964,30 +1078,41 @@ function renderDashboard(){
   </div>`;
   const reportes = renderReportes();
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
-  const estado = `<div class="side-card"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
+  const estado = `<div class="side-card" style="margin-top:18px;"><div class="side-title">Estado del equipo — solo lectura, lo marca cada uno</div>
+    <div class="status-grid">
     ${state.employees.map(e=>{ const m = statusMeta(e.id);
-      return `<div class="status-item"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></div>`;
+      return `<div class="status-chip"><span class="status-name"><span class="status-dot" style="background:${m.color}; ${m.outline?'border:1.5px dashed var(--text-dark-sec); background:transparent;':''} opacity:${m.dim?0.5:1};"></span>${e.name}</span><span class="status-label mono" style="color:${m.outline?'var(--text-dark-sec)':m.color}">${m.text}</span></div>`;
     }).join("")}
+    </div>
   </div>`;
-  const pendientes = state.ausenciasPendientes.length ? `<div class="accordion-card" style="padding-bottom:16px;"><h3>Faltas y certificados pendientes</h3>
-    ${state.ausenciasPendientes.map(a=>`<div class="pending-card">
+  const pendientes = state.ausenciasPendientes.length ? `<div class="accordion-card" style="padding-bottom:16px; margin-top:18px;"><h3>Faltas y certificados pendientes</h3>
+    <div class="pending-grid">
+    ${state.ausenciasPendientes.map(a=>`<div class="pending-card" style="margin-bottom:0;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
         <div><b>${a.empleadoNombre}</b> · ${a.fecha}<div style="font-size:12.5px; color:var(--text-light-sec); margin-top:4px;">${a.motivo||'Sin motivo detallado'}</div></div>
         <span class="badge badge-pendiente">Pendiente</span>
       </div>
       ${a.certificado_b64 ? `<img class="pending-thumb" src="${a.certificado_b64}" />` : ""}
+      ${state.rechazando && state.rechazando.id===a.id ? `
+        <textarea id="inp-motivo-rechazo" placeholder="¿Por qué la rechazás? (se lo va a ver el empleado)" oninput="updateMotivoRechazo(this.value)" style="min-height:60px; margin-top:10px;">${state.rechazando.motivo}</textarea>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-ghost" style="padding:9px 16px; font-size:12.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" onclick="cancelarRechazo()">Cancelar</button>
+          <button class="btn btn-primary" style="padding:9px 16px; font-size:12.5px; background:var(--coral);" onclick="confirmarRechazo()">Confirmar rechazo</button>
+        </div>
+      ` : `
       <div style="display:flex; gap:8px; margin-top:10px;">
         <button class="btn btn-primary" style="padding:9px 16px; font-size:12.5px;" onclick="reviewAusencia('${a.id}','aprobado')">Aprobar</button>
-        <button class="btn btn-ghost" style="padding:9px 16px; font-size:12.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" onclick="reviewAusencia('${a.id}','rechazado')">Rechazar</button>
-      </div>
+        <button class="btn btn-ghost" style="padding:9px 16px; font-size:12.5px; border:1.5px solid var(--mint-dim); border-radius:999px;" onclick="iniciarRechazo('${a.id}')">Rechazar</button>
+      </div>`}
     </div>`).join("")}
+    </div>
   </div>` : "";
   const statMini = `<div class="stat-grid" style="margin-top:18px;">
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">🏪 ${activeLocal?activeLocal.nombre:'—'}</div><div style="font-size:13px; color:var(--text-light-sec);">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
     <div class="stat-card" style="box-shadow:none; border:1.5px solid var(--mint-dim); padding:14px;"><div class="stat-label" style="margin-bottom:4px;">👥 Equipo</div><div style="font-size:13px; color:var(--text-light-sec);">${state.employees.length} personas · ${state.locales.length} sucursal${state.locales.length===1?'':'es'}</div></div>
   </div>`;
   return `${renderLocalTabs()}${renderNewLocalForm()}${calendario}${reportes}${alertBlock}
-    <div class="dash-grid" style="margin-top:18px;">${estado}${pendientes}</div>
+    ${estado}${pendientes}
     ${statMini}
     <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
 }
@@ -1088,7 +1213,10 @@ function renderEmployeeDashboard(){
     : `<button class="btn btn-ghost" style="border:1.5px dashed var(--mint-dim); border-radius:12px; margin-top:14px; width:100%; padding:14px;" onclick="startReportarFalta()">+ Reportar una falta</button>`;
   const misAusenciasHtml = (state.misAusencias||[]).length ? `<div style="margin-top:16px;">
     <div class="field-label" style="margin-bottom:8px;">Tus faltas reportadas</div>
-    ${state.misAusencias.map(a=>`<div class="pending-card" style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:12.5px;">${a.fecha} · ${a.motivo||'Sin motivo'}</span><span class="badge badge-${a.estado_revision}">${a.estado_revision}</span></div>`).join("")}
+    ${state.misAusencias.map(a=>`<div class="pending-card">
+      <div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:12.5px;">${a.fecha} · ${a.motivo||'Sin motivo'}</span><span class="badge badge-${a.estado_revision}">${a.estado_revision}</span></div>
+      ${a.estado_revision==='rechazado' && a.motivo_rechazo ? `<div style="font-size:12px; color:var(--coral-dim); margin-top:6px;">Motivo del rechazo: ${a.motivo_rechazo}</div>` : ""}
+    </div>`).join("")}
   </div>` : "";
   return `<div class="wizard-wrap"><div class="card">
     <div class="greet display">Hola, ${me.name} 👋</div><p class="sub" style="margin-top:2px;">${state.empresaName}</p>
