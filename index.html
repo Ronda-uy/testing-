@@ -149,6 +149,7 @@
   .cell-btn{ width:100%; border-radius:10px; border:1.5px solid var(--mint-dim); font-size:10.5px; font-weight:700; padding:10px 4px; text-align:center; transition:transform .1s ease; }
   .cell-btn:hover{ transform:scale(1.04); }
   .cell-manana{ background:rgba(188,237,7,0.22); border-color:var(--lime-dim); color:var(--ink); }
+  .cell-asignado{ background:rgba(188,237,7,0.22); border-color:var(--lime-dim); color:var(--ink); }
   .cell-tarde{ background:var(--ink); border-color:var(--ink); color:var(--mint); }
   .cell-franco{ background:transparent; border-style:dashed; border-color:var(--forest); color:var(--forest); }
   .cell-empty{ background:transparent; border-style:dashed; color:var(--text-light-sec); }
@@ -309,6 +310,33 @@ async function loadState(){
  }
 }
 
+const PRESETS_TURNO = {
+  partido: { label:"Turno partido (Mañana y Tarde)", turnos:[
+    {nombre:"Mañana", duracionHoras:8, personasSemana:1, personasFinde:1},
+    {nombre:"Tarde", duracionHoras:8, personasSemana:1, personasFinde:1},
+  ]},
+  completo: { label:"Turno completo (un solo turno)", turnos:[
+    {nombre:"Turno único", duracionHoras:8, personasSemana:1, personasFinde:1},
+  ]},
+  triple: { label:"Mañana, Tarde y Noche", turnos:[
+    {nombre:"Mañana", duracionHoras:8, personasSemana:1, personasFinde:1},
+    {nombre:"Tarde", duracionHoras:8, personasSemana:1, personasFinde:1},
+    {nombre:"Noche", duracionHoras:8, personasSemana:1, personasFinde:1},
+  ]},
+  cuatro: { label:"Dividido en 4 turnos", turnos:[
+    {nombre:"Turno 1", duracionHoras:6, personasSemana:1, personasFinde:1},
+    {nombre:"Turno 2", duracionHoras:6, personasSemana:1, personasFinde:1},
+    {nombre:"Turno 3", duracionHoras:6, personasSemana:1, personasFinde:1},
+    {nombre:"Turno 4", duracionHoras:6, personasSemana:1, personasFinde:1},
+  ]},
+};
+function nuevoId(){ return (crypto && crypto.randomUUID) ? crypto.randomUUID() : ("t"+Date.now()+Math.random().toString(16).slice(2)); }
+function findTurno(localId, turnoId){
+  const loc = state.locales.find(l=>l.id===localId);
+  if(!loc) return null;
+  return (loc.config.turnos||[]).find(t=>t.id===turnoId) || null;
+}
+
 function rulesForConfig(config){
   if(!config) return { label:"Sin definir", descanso:0, maxHoras:0 };
   if(config.rubro==="personalizado"){
@@ -394,7 +422,25 @@ function fmtTime(iso){ return new Date(iso).toLocaleTimeString("es-UY",{hour:"2-
 
 /* ---- Sucursales ---- */
 function selectLocalTab(id){ state.activeLocalId=id; render(); }
-function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"", personasPorTurno:"1" }; render(); }
+function startAddLocal(){ state.addingLocal=true; state.newLocalDraft={ nombre:"", rubro:null, descansoTipo:null, jornadaTipo:null, mediaHora:null, descansoCustom:"", maxHorasCustom:"", turnos:[] }; render(); }
+function aplicarPreset(key){
+  const preset = PRESETS_TURNO[key];
+  if(!preset) return;
+  state.newLocalDraft.turnos = preset.turnos.map(t=>({...t, id:nuevoId()}));
+  render();
+}
+function addTurnoRow(){
+  state.newLocalDraft.turnos.push({id:nuevoId(), nombre:"Nuevo turno", duracionHoras:8, personasSemana:1, personasFinde:1});
+  render();
+}
+function updateTurnoRow(id, patch){
+  state.newLocalDraft.turnos = state.newLocalDraft.turnos.map(t=> t.id===id ? {...t, ...patch} : t);
+  render();
+}
+function removeTurnoRow(id){
+  state.newLocalDraft.turnos = state.newLocalDraft.turnos.filter(t=>t.id!==id);
+  render();
+}
 function updateNewLocalDraft(patch){ Object.assign(state.newLocalDraft, patch); render(); }
 function cancelAddLocal(){ state.addingLocal=false; state.newLocalDraft=null; render(); }
 function removeLocalDraft(id){
@@ -411,7 +457,11 @@ async function saveNewLocal(){
   if(d.rubro==="personalizado" && (!(Number(d.descansoCustom)>0) || !(Number(d.maxHorasCustom)>0))){
     state.error="Completá el descanso y el máximo de horas personalizado."; render(); return;
   }
-  const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom, personasPorTurno: Number(d.personasPorTurno)>0 ? Number(d.personasPorTurno) : 1 };
+  if(!d.turnos || !d.turnos.length){
+    state.error="Elegí una forma de turnos típica o agregá al menos uno manual."; render(); return;
+  }
+  const config = { rubro:d.rubro, descansoTipo:d.descansoTipo, jornadaTipo:d.jornadaTipo, mediaHora:d.mediaHora, descansoCustom:d.descansoCustom, maxHorasCustom:d.maxHorasCustom,
+    turnos: d.turnos.map(t=>({ id:t.id, nombre:t.nombre, duracionHoras:Number(t.duracionHoras)||8, personasSemana:Number(t.personasSemana)||1, personasFinde:Number(t.personasFinde)||1 })) };
   state.error=null;
   if(!state.empresaId){
     const id = "tmp"+Date.now();
@@ -428,8 +478,21 @@ async function saveNewLocal(){
 }
 
 /* ---- Grilla de turnos ---- */
-function cellValue(entry){ if(!entry) return ""; if(entry.tipo==="franco") return "franco"; return entry.tipo+"|"+entry.localId; }
-function cellDisplayClass(entry){ if(!entry) return "cell-empty"; if(entry.tipo==="franco") return "cell-franco"; return entry.tipo==="manana"?"cell-manana":"cell-tarde"; }
+function cellDisplayClass(entry){ if(!entry) return "cell-empty"; if(entry.tipo==="franco") return "cell-franco"; return "cell-asignado"; }
+function renderCellSelect(empId, dayIdx){
+  const src = state.horarioDraft || state.turnos;
+  const entry = (src[empId]||[])[dayIdx];
+  const val = entry ? (entry.tipo==="franco" ? "franco" : entry.tipo+"|"+entry.localId) : "";
+  const cls = cellDisplayClass(entry);
+  const opts = [`<option value="" ${val===''?'selected':''}>—</option>`,
+    `<option value="franco" ${val==='franco'?'selected':''}>Libre</option>`,
+    ...state.locales.flatMap(l=>(l.config.turnos||[]).map(t=>{
+      const v = t.id+"|"+l.id;
+      return `<option value="${v}" ${val===v?'selected':''}>${t.nombre} · ${l.nombre}</option>`;
+    }))
+  ].join("");
+  return `<select class="cell-select ${cls} mono" onchange="setCell('${empId}',${dayIdx},this.value)">${opts}</select>`;
+}
 async function setCell(empId, dayIdx, value){
   let entry = null;
   if(value==="franco") entry = {tipo:"franco", localId:null};
@@ -512,8 +575,14 @@ function cycleStatus(empId){
 function statsFor(empId){
   const r = employeeRules(empId);
   const days = state.turnos[empId]||Array(7).fill(null);
-  const turnos = days.filter(d=>d && (d.tipo==="manana"||d.tipo==="tarde")).length;
-  const horas = turnos*8;
+  let horas = 0, turnos = 0;
+  days.forEach(d=>{
+    if(d && d.tipo!=="franco"){
+      const t = findTurno(d.localId, d.tipo);
+      horas += t ? Number(t.duracionHoras) : 8;
+      turnos++;
+    }
+  });
   const hasFranco = days.some(d=>d && d.tipo==="franco");
   const francoIdx = days.findIndex(d=>d && d.tipo==="franco");
   const violations=[];
@@ -555,21 +624,25 @@ function computeWorkedMs(empId){
 /* ---- Generación automática de horario (heurística simple) ---- */
 function generarAutomatico(){
   if(!state.employees.length || !state.locales.length){ state.error="Necesitás al menos un empleado y una sucursal."; render(); return; }
+  const hayTurnos = state.locales.some(l=> (l.config.turnos||[]).length>0);
+  if(!hayTurnos){ state.error="Definí al menos un turno en alguna sucursal antes de generar (Reconfigurar → sucursal → Estructura de turnos)."; render(); return; }
   const emps = state.employees;
   const draft = {};
   emps.forEach(e=> draft[e.id]=Array(7).fill(null));
   // 1) A cada empleado le reservamos un día de franco, rotando para no dejar siempre el mismo día pelado de gente.
   emps.forEach((e,i)=>{ draft[e.id][i % 7] = {tipo:"franco", localId:null}; });
-  // 2) Armamos la lista de huecos a cubrir: cada sucursal, cada día, mañana y tarde.
+  // 2) Armamos los huecos a cubrir con los turnos reales de cada sucursal, respetando entre semana vs. fin de semana.
   let slots = [];
   state.locales.forEach(loc=>{
-    const n = Math.max(1, Number(loc.config.personasPorTurno)||1);
-    for(let d=0; d<7; d++){
-      for(let i=0;i<n;i++){
-        slots.push({localId:loc.id, day:d, tipo:"manana"});
-        slots.push({localId:loc.id, day:d, tipo:"tarde"});
+    (loc.config.turnos||[]).forEach(t=>{
+      for(let d=0; d<7; d++){
+        const esFinde = d>=5; // Sáb=5, Dom=6
+        const necesarios = Math.max(1, Number(esFinde ? t.personasFinde : t.personasSemana) || 1);
+        for(let i=0;i<necesarios;i++){
+          slots.push({localId:loc.id, day:d, turnoId:t.id, horas: Number(t.duracionHoras)||8});
+        }
       }
-    }
+    });
   });
   slots.sort((a,b)=>a.day-b.day);
   const horas = {}; emps.forEach(e=>horas[e.id]=0);
@@ -581,9 +654,9 @@ function generarAutomatico(){
     while(tries < emps.length){
       const cand = emps[ptr % emps.length]; ptr++; tries++;
       if(draft[cand.id][slot.day]) continue;
-      if(r.maxHoras>0 && horas[cand.id]+8 > r.maxHoras) continue;
-      draft[cand.id][slot.day] = {tipo:slot.tipo, localId:slot.localId};
-      horas[cand.id]+=8;
+      if(r.maxHoras>0 && horas[cand.id]+slot.horas > r.maxHoras) continue;
+      draft[cand.id][slot.day] = {tipo:slot.turnoId, localId:slot.localId};
+      horas[cand.id]+=slot.horas;
       return;
     }
     // nadie disponible para este hueco — queda vacío, el encargado lo completa a mano
@@ -820,8 +893,22 @@ function renderNewLocalForm(){
       <button class="status-btn ${d.mediaHora==='variable'?'active':''}" onclick="updateNewLocalDraft({mediaHora:'variable'})">Media hora variable</button>
     </div>`:""}
     <div style="margin-bottom:16px;">
-      <div class="field-label">Personas necesarias por turno (mañana y tarde)</div>
-      <input id="inp-local-personas" type="text" inputmode="numeric" value="${d.personasPorTurno||'1'}" oninput="updateNewLocalDraft({personasPorTurno:this.value})" placeholder="1" />
+      <div class="field-label">Estructura de turnos</div>
+      <select id="inp-preset" onchange="aplicarPreset(this.value)" style="width:100%; padding:12px 14px; border-radius:12px; border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); font-size:14px; margin-bottom:12px;">
+        <option value="">Elegí una forma típica...</option>
+        ${Object.entries(PRESETS_TURNO).map(([k,p])=>`<option value="${k}">${p.label}</option>`).join("")}
+      </select>
+      ${(d.turnos&&d.turnos.length) ? `<div style="display:flex; gap:8px; font-size:10px; font-weight:700; color:var(--text-light-sec); padding:0 4px; margin-bottom:6px;">
+        <span style="flex:2;">NOMBRE</span><span style="flex:1;">HORAS</span><span style="flex:1;">SEMANA</span><span style="flex:1;">FINDE</span><span style="width:22px;"></span>
+      </div>`:""}
+      ${(d.turnos||[]).map(t=>`<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; background:#F7FFEB; padding:8px; border-radius:10px;">
+        <input id="turno-nombre-${t.id}" type="text" value="${t.nombre}" oninput="updateTurnoRow('${t.id}',{nombre:this.value})" style="flex:2; min-width:90px; padding:8px 10px;" placeholder="Nombre"/>
+        <input id="turno-horas-${t.id}" type="text" inputmode="numeric" value="${t.duracionHoras}" oninput="updateTurnoRow('${t.id}',{duracionHoras:this.value})" style="flex:1; min-width:50px; padding:8px 10px;" placeholder="Hs"/>
+        <input id="turno-semana-${t.id}" type="text" inputmode="numeric" value="${t.personasSemana}" oninput="updateTurnoRow('${t.id}',{personasSemana:this.value})" style="flex:1; min-width:50px; padding:8px 10px;" placeholder="1"/>
+        <input id="turno-finde-${t.id}" type="text" inputmode="numeric" value="${t.personasFinde}" oninput="updateTurnoRow('${t.id}',{personasFinde:this.value})" style="flex:1; min-width:50px; padding:8px 10px;" placeholder="1"/>
+        <button onclick="removeTurnoRow('${t.id}')" style="color:var(--coral); font-weight:800; padding:6px 8px;">✕</button>
+      </div>`).join("")}
+      <button class="btn btn-ghost" style="border:1.5px dashed var(--mint-dim); border-radius:10px; width:100%; padding:10px; font-size:12.5px;" onclick="addTurnoRow()">+ Agregar turno manual</button>
     </div>
     <div style="display:flex; gap:10px;">
       <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
@@ -862,7 +949,6 @@ function renderDashboard(){
     totalAlerts += s.violations.length;
     s.violations.forEach(v=> alertLines.push(`<div class="alert-line">⚠️ <b>${e.name}</b> ${v}.</div>`));
   });
-  const source = state.horarioDraft || state.turnos;
   const rowsHtml = state.employees.map(e=>{
     const cells = DAYS.map((_,d)=>`<td>${renderCellSelect(e.id,d)}</td>`).join("");
     return `<tr><td><div class="emp-cell-name">${e.name}</div><div class="emp-cell-role">${e.role}</div></td>${cells}</tr>`;
@@ -874,7 +960,7 @@ function renderDashboard(){
     <div style="overflow-x:auto; border:1px solid var(--mint-dim); border-radius:var(--radius-sm);"><table style="min-width:640px;">
       <thead><tr><th>Empleado</th>${DAYS.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody>
     </table></div>
-    <div class="legend" style="padding-left:0; padding-right:0;"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Mañana</span><span><span class="legend-swatch" style="background:var(--ink);"></span>Tarde</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige local + turno</span></div>
+    <div class="legend" style="padding-left:0; padding-right:0;"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Turno asignado</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige sucursal + turno</span></div>
   </div>`;
   const reportes = renderReportes();
   const alertBlock = totalAlerts>0 ? `<div class="alert-card" style="margin-top:18px;"><b style="display:block;margin-bottom:6px;">🚨 Alertas</b>${alertLines.join("")}</div>` : `<div class="card" style="margin-top:18px; box-shadow:none; border:1.5px dashed var(--mint-dim); text-align:center; color:var(--forest); font-weight:700; font-size:13.5px;">✅ Sin alertas esta semana</div>`;
@@ -904,18 +990,6 @@ function renderDashboard(){
     <div class="dash-grid" style="margin-top:18px;">${estado}${pendientes}</div>
     ${statMini}
     <div class="footer-note">Conectado a tu base de datos. Prototipo ilustrativo — no reemplaza asesoramiento legal o contable.</div>`;
-}
-function renderCellSelect(empId, dayIdx){
-  const entry = (state.turnos[empId]||[])[dayIdx];
-  const val = cellValue(entry);
-  const cls = cellDisplayClass(entry);
-  const opts = [`<option value="" ${val===''?'selected':''}>—</option>`,
-    `<option value="franco" ${val==='franco'?'selected':''}>Libre</option>`,
-    ...state.locales.flatMap(l=>[
-      `<option value="manana|${l.id}" ${val==='manana|'+l.id?'selected':''}>Mañ · ${l.nombre}</option>`,
-      `<option value="tarde|${l.id}" ${val==='tarde|'+l.id?'selected':''}>Tar · ${l.nombre}</option>`,
-    ])].join("");
-  return `<select class="cell-select ${cls} mono" onchange="setCell('${empId}',${dayIdx},this.value)">${opts}</select>`;
 }
 
 /* ---- Empleado ---- */
@@ -991,15 +1065,16 @@ function renderEmployeeDashboard(){
   const isLibreToday = todayEntry && todayEntry.tipo==="franco";
   const todayLocal = todayEntry && todayEntry.localId ? localName(todayEntry.localId) : null;
   const st = state.clockStatus[me.id]||"afuera";
+  const todayTurnoNombre = todayEntry && todayEntry.tipo!=="franco" ? ((findTurno(todayEntry.localId, todayEntry.tipo)||{}).nombre) : null;
   const strip = DAYS.map((d,i)=>{
     const v = (state.turnos[me.id]||[])[i];
     const isToday = i===todayIndex();
-    const lbl = !v ? "—" : v.tipo==="franco" ? "Libre" : (v.tipo==="manana"?"Mañ":"Tarde")+" "+(localName(v.localId)||"").slice(0,6);
+    const lbl = !v ? "—" : v.tipo==="franco" ? "Libre" : ((findTurno(v.localId,v.tipo)||{}).nombre||"Turno").slice(0,6);
     return `<div class="strip-pill mono ${cellDisplayClass(v)}" style="${isToday?'box-shadow:0 0 0 2px var(--ink);':''}"><span class="strip-day">${d}${isToday?' •':''}</span>${lbl}</div>`;
   }).join("");
   const statusBlock = isLibreToday
     ? `<div class="libre-banner">🎉 Hoy es tu día libre. ¡Disfrutalo!</div>`
-    : `<div><div class="field-label" style="margin-bottom:8px;">${todayLocal?'Hoy en '+todayLocal:''}</div>${renderStatusFlow(me.id)}</div>`;
+    : `<div><div class="field-label" style="margin-bottom:8px;">${todayLocal?'Hoy en '+todayLocal+(todayTurnoNombre?' · '+todayTurnoNombre:''):''}</div>${renderStatusFlow(me.id)}</div>`;
   const faltaSection = state.reportandoFalta ? `<div class="new-local-form">
       <div class="field-label">Fecha</div>
       <input id="inp-fecha" type="date" value="${state.nuevaAusencia.fecha}" oninput="updateNuevaAusencia({fecha:this.value})" style="margin-bottom:12px;" />
