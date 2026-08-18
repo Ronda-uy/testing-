@@ -926,6 +926,17 @@ function huecoPorAusencia(a){
   }
   return null;
 }
+function sugerirReemplazo(ausenteId, dayIdx){
+  const candidatos = state.employees.filter(e=> e.id!==ausenteId && !(state.turnos[e.id]||[])[dayIdx]);
+  if(!candidatos.length) return null;
+  candidatos.sort((a,b)=> statsFor(a.id).horas - statsFor(b.id).horas);
+  return candidatos[0];
+}
+async function generarSolucionHueco(ausenteId, dayIdx, turnoId, localId){
+  const sugerido = sugerirReemplazo(ausenteId, dayIdx);
+  if(!sugerido){ state.error="No hay nadie libre ese día para cubrir automáticamente — probá elegirlo a mano."; render(); return; }
+  await cubrirHueco(ausenteId, dayIdx, turnoId, localId, sugerido.id);
+}
 async function cubrirHueco(ausenteId, dayIdx, turnoId, localId, reemplazoId){
   if(!reemplazoId){ state.error="Elegí quién cubre antes de asignar."; render(); return; }
   await setCell(reemplazoId, dayIdx, turnoId+"|"+localId);
@@ -977,7 +988,7 @@ function updateMotivoRechazo(v){ state.rechazando.motivo = v; render(); }
 async function confirmarRechazo(){
   const { id, motivo } = state.rechazando;
   const { error } = await sb.from("ausencias").update({ estado_revision:"rechazado", motivo_rechazo: motivo||null }).eq("id", id);
-  if(error){ state.error="No se pudo actualizar."; render(); return; }
+  if(error){ state.error="No se pudo actualizar el rechazo: "+error.message; render(); return; }
   state.ausenciasPendientes = state.ausenciasPendientes.filter(a=>a.id!==id);
   state.rechazando = null;
   render();
@@ -1552,6 +1563,7 @@ function renderDashboard(){
           ${opciones}
         </select>
         <button class="btn btn-primary" style="padding:7px 14px; font-size:12px;" onclick="cubrirHueco('${a.empleado_id}',${hueco.dayIdx},'${hueco.turnoId}','${hueco.localId}', document.getElementById('cubrir-${a.id}').value)">Asignar</button>
+        <button class="btn btn-ghost" style="padding:7px 14px; font-size:12px; border:1.5px dashed var(--forest); border-radius:999px; color:var(--forest); font-weight:700;" onclick="generarSolucionHueco('${a.empleado_id}',${hueco.dayIdx},'${hueco.turnoId}','${hueco.localId}')">🤖 Generar solución</button>
       </div>
     </div>`;
   }).filter(Boolean);
