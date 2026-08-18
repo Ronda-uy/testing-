@@ -208,6 +208,29 @@
   .history-line{ font-size:11.5px; color:var(--text-light-sec); margin-top:6px; line-height:1.6; }
   input[type=file]{ font-size:12.5px; }
   input[type=date]{ width:100%; border-radius:var(--radius-sm); border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); padding:12px 14px; font-size:14px; font-family:inherit; }
+  .scroll-x{ -webkit-overflow-scrolling:touch; }
+
+  /* ---- Mobile pass ---- */
+  @media (max-width: 640px){
+    main{ padding:22px 14px 60px; }
+    .nav{ padding:12px 16px; gap:8px; }
+    .brand .word{ font-size:18px; }
+    .brand .tag{ display:none; }
+    .nav-right{ gap:6px; }
+    .pill{ padding:7px 11px; font-size:11px; }
+    .card{ padding:18px; }
+    h2.title, h2.display{ font-size:20px; }
+    .stat-value{ font-size:18px; }
+    .status-chip{ flex:1 1 45%; min-width:130px; }
+    .wizard-wrap{ max-width:100%; }
+    table{ font-size:12.5px; }
+    thead th{ padding:12px 3px 8px; }
+    .cell-select{ padding:7px 1px; font-size:9px; }
+    .accordion-card{ padding:6px 14px; }
+    details.acc summary{ font-size:12.5px; gap:6px; }
+    .pending-grid{ grid-template-columns:1fr; }
+    .new-local-form{ padding:14px; }
+  }
 </style>
 </head>
 <body>
@@ -1309,7 +1332,7 @@ function renderReportesPage(){
   </div>`;
 
   const hoyEsFinDeSemana = todayIndex()===6;
-  const cerrarBtn = `<div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:0;">
+  const cerrarBtn = `<div class="card" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px;">
     <div><b style="font-size:14px;">📦 Cerrar esta semana</b><div style="font-size:12.5px; color:var(--text-light-sec); margin-top:2px;">${hoyEsFinDeSemana?'Guardá los números de esta semana como registro fijo — para liquidación o historial.':'La semana todavía no terminó — podés cerrarla igual, pero va a quedar parcial.'}</div></div>
     <button class="btn btn-primary" style="padding:9px 18px; font-size:12.5px;" ${state.cerrandoSemana?'disabled':''} onclick="cerrarSemana()">${state.cerrandoSemana?'Cerrando…':'Cerrar semana'}</button>
   </div>`;
@@ -1354,7 +1377,7 @@ function renderDashboard(){
       </div>
     </div>` : ""}
     ${renderCalendarControls()}
-    <div style="overflow-x:auto; border:1px solid var(--mint-dim); border-radius:var(--radius-sm);"><table style="min-width:640px;">
+    <div class="scroll-x" style="overflow-x:auto; border:1px solid var(--mint-dim); border-radius:var(--radius-sm);"><table style="min-width:640px;">
       <thead><tr><th>Empleado</th>${DAYS.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody>
     </table></div>
     <div class="legend" style="padding-left:0; padding-right:0;"><span><span class="legend-swatch" style="background:rgba(188,237,7,0.35); border:1px solid var(--lime-dim);"></span>Turno asignado</span><span><span class="legend-swatch" style="background:transparent; border:1px dashed var(--forest);"></span>Libre</span><span>Cada celda elige sucursal + turno</span></div>
@@ -1543,6 +1566,10 @@ function renderEmployeeDashboard(){
 
 async function heartbeat(){
   if(!loaded || !state.empresaId) return;
+  if(document.hidden) return;
+  const activo = document.activeElement;
+  const estaTipeando = activo && (activo.tagName==="INPUT" || activo.tagName==="TEXTAREA" || activo.tagName==="SELECT");
+  if(estaTipeando) return;
   try{
     await fetchEmpresaData(state.empresaId);
     if(state.role==="employee" && state.employeeSession) await loadMisAusencias(state.employeeSession);
@@ -1550,7 +1577,7 @@ async function heartbeat(){
     render();
   } catch(e){ /* silencioso — no interrumpir con errores de fondo */ }
 }
-setInterval(heartbeat, 20000);
+setInterval(heartbeat, 25000);
 
 loadState();
 </script>
