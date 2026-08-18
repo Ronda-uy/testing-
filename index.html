@@ -98,7 +98,7 @@
   .radio.on{ background:var(--ink); border-color:var(--ink); }
   .radio.on::after{ content:''; width:9px; height:9px; border-radius:50%; background:var(--lime); }
 
-  textarea, input[type=text]{ width:100%; border-radius:var(--radius-sm); border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); padding:14px 16px; font-size:14px; font-family:inherit; }
+  textarea, input[type=text], input[type=password]{ width:100%; border-radius:var(--radius-sm); border:1.5px solid var(--mint-dim); background:#fff; color:var(--ink); padding:14px 16px; font-size:14px; font-family:inherit; }
   textarea{ min-height:100px; resize:vertical; }
   textarea:focus, input:focus{ outline:none; border-color:var(--lime-dim); box-shadow:0 0 0 3px rgba(188,237,7,0.18); }
   .field-label{ font-size:11px; font-weight:700; color:var(--text-light-sec); margin-bottom:5px; text-transform:uppercase; letter-spacing:.04em; }
@@ -254,7 +254,7 @@
 const SUPABASE_URL = "https://vzihlzoqnqowqidxvuth.supabase.co";
 const SUPABASE_KEY = "sb_publishable_u49hetpJhEM5BvBOsYcbhA_KRpC-IH4";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 });
 
 const RUBROS = {
@@ -303,6 +303,7 @@ function freshState(){
     ausenciasPendientes:[], misAusencias:[], ausenciasMes:[],
     cierres:[], cerrandoSemana:false,
     avisos:[], nuevoAviso:null,
+    authUser:null, authMode:"signup", authEmail:"", authPassword:"", authError:null, authLoading:false,
     addingLocal:false, newLocalDraft:null,
     reportandoFalta:false, nuevaAusencia:null,
     horarioDraft:null,
@@ -355,8 +356,42 @@ async function fetchAvisos(){
   state.avisos = data||[];
 }
 
+async function checkAuth(){
+  const { data } = await sb.auth.getUser();
+  state.authUser = (data && data.user) ? data.user : null;
+}
+function startAuthMode(mode){ state.authMode=mode; state.authError=null; render(); }
+async function submitAuth(){
+  const email = (state.authEmail||"").trim(), pass = state.authPassword||"";
+  if(!email || !pass){ state.authError="Completá email y contraseña."; render(); return; }
+  if(pass.length<6){ state.authError="La contraseña necesita al menos 6 caracteres."; render(); return; }
+  state.authError=null; state.authLoading=true; render();
+  try{
+    if(state.authMode==="signup"){
+      const { data, error } = await sb.auth.signUp({ email, password: pass });
+      if(error) throw error;
+      if(!data.session){ state.authError="Cuenta creada — revisá tu mail para confirmarla y después iniciá sesión."; state.authMode="login"; }
+      else { state.authUser = data.user; }
+    } else {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+      if(error) throw error;
+      state.authUser = data.user;
+    }
+  } catch(err){
+    state.authError = err.message || "No se pudo autenticar.";
+  } finally {
+    state.authLoading=false; render();
+  }
+}
+async function cerrarSesion(){
+  await sb.auth.signOut();
+  state.authUser = null;
+  render();
+}
+
 async function loadState(){
  try{
+  await checkAuth();
   const empresaId = getEmpresaIdFromUrl();
   if(empresaId){
     const { data: empresaRow, error: e1 } = await sb.from("empresas").select("*").eq("id", empresaId).single();
@@ -443,7 +478,7 @@ async function activarPanel(){
   state.saving = true; state.error=null; render();
   try{
     if(!state.empresaId){
-      const { data: emp, error: e1 } = await sb.from("empresas").insert({ nombre: state.empresaName }).select().single();
+      const { data: emp, error: e1 } = await sb.from("empresas").insert({ nombre: state.empresaName, owner_user_id: state.authUser?state.authUser.id:null }).select().single();
       if(e1) throw new Error("No se pudo crear el negocio: "+e1.message);
       const newLocales = [];
       for(const loc of state.locales){
@@ -543,7 +578,12 @@ async function saveNewLocal(){
     convenioAplica: !!d.convenioAplica, convenioNombre: d.convenioNombre||"", notas: d.notas||"",
     turnos: d.turnos.map(t=>({ id:t.id, nombre:t.nombre, duracionHoras:Number(t.duracionHoras)||8, personasSemana:Number(t.personasSemana)||1, personasFinde:Number(t.personasFinde)||1 })) };
   state.error=null;
-  if(!state.empresaId){
+  if(d.editingLocalId){
+    const { data, error } = await sb.from("locales").update({ nombre:d.nombre, config }).eq("id", d.editingLocalId).select().single();
+    if(error){ state.error="No se pudo actualizar la sucursal: "+error.message; render(); return; }
+    const idx = state.locales.findIndex(l=>l.id===d.editingLocalId);
+    if(idx>=0) state.locales[idx] = data;
+  } else if(!state.empresaId){
     const id = "tmp"+Date.now();
     state.locales.push({id, nombre:d.nombre, config});
     state.activeLocalId = id;
@@ -755,7 +795,7 @@ function computeWorkedMs(empId){
 function generarAutomatico(){
   if(!state.employees.length || !state.locales.length){ state.error="Necesitás al menos un empleado y una sucursal."; render(); return; }
   const hayTurnos = state.locales.some(l=> (l.config.turnos||[]).length>0);
-  if(!hayTurnos){ state.error="Definí al menos un turno en alguna sucursal antes de generar (Reconfigurar → sucursal → Estructura de turnos)."; render(); return; }
+  if(!hayTurnos){ state.error="Definí al menos un turno en alguna sucursal antes de generar (Reconfigurar → tocá 'Editar' en tu sucursal → Estructura de turnos)."; render(); return; }
   const emps = state.employees;
   const draft = {};
   emps.forEach(e=> draft[e.id]=Array(7).fill(null));
@@ -1017,6 +1057,9 @@ function renderNavRight(){
     html += `<button id="copyLinkBtn" class="pill pill-lime pill-btn" onclick="copyLink()">🔗 Copiar link del equipo</button>
       <button class="pill pill-ghost pill-btn" onclick="update({view:'wizard', step:0})">Reconfigurar</button>`;
   }
+  if(state.role==="admin" && state.authUser){
+    html += `<button class="pill pill-ghost pill-btn" title="${state.authUser.email}" onclick="cerrarSesion()">🔓 Cerrar sesión</button>`;
+  }
   html += `<button class="pill pill-ghost pill-btn" title="Deja de ver este negocio en este navegador — no borra nada" onclick="resetAll()">Salir</button>`;
   el.innerHTML = html;
 }
@@ -1038,7 +1081,11 @@ function render(){
     else if(!state.employeeSession){ html += renderEmployeeJoin(); }
     else { html += renderEmployeeDashboard(); }
   } else {
-    html += state.view==="wizard" ? renderWizard() : state.view==="reportes" ? renderReportesPage() : renderDashboard();
+    if(!state.authUser){
+      html += renderAdminAuth();
+    } else {
+      html += state.view==="wizard" ? renderWizard() : state.view==="reportes" ? renderReportesPage() : renderDashboard();
+    }
   }
   app.innerHTML = html;
 
@@ -1078,12 +1125,43 @@ function renderLocalCards(){
   if(!state.locales.length) return `<p style="font-size:13px;color:var(--text-light-sec);margin-bottom:14px;">Todavía no agregaste ninguna sucursal.</p>`;
   return state.locales.map(l=>{
     const r = rulesForConfig(l.config);
+    const nTurnos = (l.config.turnos||[]).length;
     return `<div class="emp-row">
       <div class="avatar" style="background:var(--forest);color:var(--mint);">🏪</div>
-      <div style="flex:1;"><div class="emp-name">${l.nombre}</div><div class="emp-role">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h</div></div>
+      <div style="flex:1;"><div class="emp-name">${l.nombre}</div><div class="emp-role">${r.label} · descanso ${r.descanso}h · máx ${r.maxHoras}h · ${nTurnos>0? nTurnos+' turno'+(nTurnos===1?'':'s')+' definido'+(nTurnos===1?'':'s') : '⚠️ sin turnos definidos'}</div></div>
+      <button class="btn btn-ghost" style="padding:6px 10px; font-size:11px; border:1.5px solid var(--mint-dim); border-radius:8px;" onclick="editarLocal('${l.id}')">Editar</button>
       ${!state.empresaId ? `<button class="btn btn-ghost" style="padding:6px 10px; font-size:11px;" onclick="removeLocalDraft('${l.id}')">Quitar</button>` : ""}
     </div>`;
   }).join("");
+}
+
+function editarLocal(id){
+  const loc = state.locales.find(l=>l.id===id);
+  if(!loc) return;
+  const c = loc.config || {};
+  state.newLocalDraft = {
+    nombre: loc.nombre, rubro: c.rubro||null, descansoTipo: c.descansoTipo||null, jornadaTipo: c.jornadaTipo||null, mediaHora: c.mediaHora||null,
+    descansoCustom: c.descansoCustom||"", maxHorasCustom: c.maxHorasCustom||"",
+    turnos: (c.turnos||[]).map(t=>({...t})),
+    convenioAplica: !!c.convenioAplica, convenioNombre: c.convenioNombre||"", notas: c.notas||"",
+    editingLocalId: id,
+  };
+  state.addingLocal = true;
+  render();
+}
+
+function renderAdminAuth(){
+  return `<div class="wizard-wrap"><div class="card">
+    <h2 class="title display">${state.authMode==='signup'?'Creá tu cuenta de encargado':'Iniciá sesión'}</h2>
+    <p class="sub">Para administrar tu negocio en Ronda necesitás una cuenta.</p>
+    ${state.authError?`<div class="alert-card" style="border-left-color:var(--coral); margin-bottom:14px;"><div class="alert-line">⚠️ ${state.authError}</div></div>`:""}
+    <div class="field-label">Email</div>
+    <input id="inp-auth-email" type="text" value="${state.authEmail||''}" oninput="update({authEmail:this.value})" placeholder="tu@email.com" style="margin-bottom:14px;" />
+    <div class="field-label">Contraseña</div>
+    <input id="inp-auth-password" type="password" value="${state.authPassword||''}" oninput="update({authPassword:this.value})" placeholder="Mínimo 6 caracteres" style="margin-bottom:18px;" onkeydown="if(event.key==='Enter')submitAuth()" />
+    <button class="btn btn-primary btn-block" ${state.authLoading?'disabled':''} onclick="submitAuth()">${state.authLoading?'Un momento…':(state.authMode==='signup'?'Crear cuenta':'Ingresar')}</button>
+    <button class="link-quiet" style="border:none;background:none;cursor:pointer;display:block;margin:14px auto 0;" onclick="startAuthMode('${state.authMode==='signup'?'login':'signup'}')">${state.authMode==='signup'?'¿Ya tenés cuenta? Iniciá sesión':'¿Todavía no tenés cuenta? Creala'}</button>
+  </div></div>`;
 }
 
 function renderWizard(){
@@ -1220,7 +1298,7 @@ function renderNewLocalForm(){
     </div>
     <div style="display:flex; gap:10px;">
       <button class="btn btn-ghost" onclick="cancelAddLocal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveNewLocal()">${state.empresaId? 'Crear sucursal':'Agregar a la lista'}</button>
+      <button class="btn btn-primary" onclick="saveNewLocal()">${d.editingLocalId ? 'Guardar cambios' : (state.empresaId? 'Crear sucursal':'Agregar a la lista')}</button>
     </div>
   </div>`;
 }
